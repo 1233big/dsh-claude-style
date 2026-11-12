@@ -3,14 +3,13 @@
  * `usage` route answers with.
  *
  * The merge keeps the ids behind each day, because the dashboard unions session
- * ids over an arbitrary range window instead of summing per-day counts (a session
- * spanning two days is one session). The payload's `hours` arrays are the one
- * figure the fold alone can supply; the ledger has no hour dimension.
+ * ids over a range window instead of summing per-day counts: a session spanning
+ * two days is one session. The payload's `hours` arrays are the one figure the
+ * fold alone can supply.
  *
- * The cost meter's ledger and our own fold are two accounts of the same days, so
- * they combine by date and never by addition: a day the ledger knows is the
- * ledger's, and only the dates past its newest come from the fold. Adding
- * the fold's days on top of the ledger's would count the same settlements twice.
+ * The ledger and our own fold are two accounts of the same days, so they combine
+ * by date and never by addition: each day keeps the account that recorded more of
+ * it, and the day's sessions come from both.
  */
 import { BUCKET_KEYS, addBuckets, emptyBuckets } from './usage-ledger.js'
 import type { Buckets, DayBuckets } from './usage-ledger.js'
@@ -149,51 +148,69 @@ export function summarize(
   }
 }
 
-/** What merging the two accounts produced: the days, the sessions behind them, and whether the fold contributed a day. */
+/** What merging the two accounts produced: the days, the sessions behind them, and whether the fold supplied a day's figures. */
 export interface LedgerMerge {
   days: Map<string, DayBuckets>
   sessionIds: Set<string>
-  /** Whether any day came from the fold rather than the ledger. */
+  /** Whether the figures of any day came from the fold rather than the ledger. */
   folded: boolean
 }
 
 /**
  * Combine the cost meter's ledger with our own fold by date.
  *
- * A ledger day is the ledger's, down to its per-day session ids and its model
- * split; the ledger is the account that saw every provider, so the fold never
- * overwrites one of its days. The fold supplies the dates the ledger's newest
- * day leaves uncovered — the stretch after the cost meter stopped writing —
- * which is also where its hour histograms, the one dimension the ledger has no
- * column for, are worth keeping.
+ * Both describe the same settlements, so a day is never their sum: the ledger can
+ * hold only part of a day and can leave out settlements it did not bill, while
+ * the fold sees every stored log and can be short of the sessions whose logs are
+ * gone, which the ledger still holds. A day therefore keeps whichever account
+ * recorded more tokens on it, takes its session ids from both, and keeps the
+ * model split of the account whose tokens it holds. The hour histogram is always
+ * the fold's.
  *
  * @param ledgerDays - the ledger's day map, or null when there is no ledger at
- *     all: a null is what tells the caller the answer is the fold's alone, which
- *     an empty map cannot say.
- * @param sessions - the per-session folds, keyed by session id.
+ *     all: a null is what tells the caller the answer is the fold's alone. Its
+ *     session ids are already spelled as the stored directory names the record
+ *     keys a session by.
+ * @param sessions - the per-session folds, keyed by the stored directory name.
  */
 export function mergeLedgerFold(
   ledgerDays: ReadonlyMap<string, DayBuckets> | null,
   sessions: ReadonlyMap<string, RecordSession>,
 ): LedgerMerge {
+  const foldedDays = mergeSessions(sessions)
+  const dates = new Set<string>(ledgerDays?.keys() ?? [])
+  for (const date of foldedDays.keys()) dates.add(date)
   const days = new Map<string, DayBuckets>()
   const sessionIds = new Set<string>()
-  let lastLedgerDay: string | null = null
-  for (const [date, buckets] of ledgerDays ?? []) {
-    days.set(date, buckets)
-    if (lastLedgerDay === null || date > lastLedgerDay) lastLedgerDay = date
-    for (const id of buckets.sessionIds ?? []) sessionIds.add(id)
-  }
-  // An uncovered day is the fold's whole day: its model split, the sessions
-  // that settled on it and its hour histogram, as the fold alone would answer.
   let folded = false
-  for (const [date, buckets] of mergeSessions(sessions)) {
-    if (lastLedgerDay !== null && date <= lastLedgerDay) continue
-    days.set(date, buckets)
-    folded = true
-    // The count follows the days rather than the logs: a session whose log is
-    // gone is still behind the days the record holds for it.
-    for (const id of buckets.sessionIds ?? []) sessionIds.add(id)
+  for (const date of dates) {
+    const ledger = ledgerDays?.get(date)
+    const fold = foldedDays.get(date)
+    // A day the ledger did not record is the fold's whole day, and so is one it
+    // recorded less of: its model split, the sessions that settled on it and its
+    // hour histogram, as the fold alone would answer.
+    const fromFold = ledger === undefined || (fold !== undefined && bucketTotal(fold) > bucketTotal(ledger))
+    const source = fromFold ? fold : ledger
+    if (source === undefined) continue
+    if (fromFold) folded = true
+    // The day's own figures come from one account, so its buckets and their
+    // model split stay one coherent account rather than a mix of the two.
+    const held: DayBuckets = emptyBuckets()
+    addBuckets(held, source, 1)
+    if (source.models !== undefined) held.models = source.models
+    // The sessions come from both: the ledger's ids are read as the directory
+    // names the record holds, so the two accounts name one session once.
+    const ids = new Set<string>(ledger?.sessionIds ?? [])
+    for (const id of fold?.sessionIds ?? []) ids.add(id)
+    const behind = [...ids].sort()
+    held.sessionIds = behind
+    held.sessions = behind.length
+    for (const id of behind) sessionIds.add(id)
+    // The ledger keeps no hour of a day, so the histogram is the fold's whether
+    // or not the day's tokens came from the ledger.
+    const hours = fold?.hours ?? source.hours
+    if (hours !== undefined) held.hours = hours
+    days.set(date, held)
   }
   return { days, sessionIds, folded }
 }

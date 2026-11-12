@@ -1,10 +1,10 @@
-import { COMPOSER_GAP_COMPACT, COMPOSER_GAP_ROOMY, COMPOSER_GAP_THEME, COMPOSER_SCOPE_ALL, COMPOSER_SCOPE_CONVERSATION, COMPOSER_SCOPE_HERO } from '../../constants'
+import { COMPOSER_GAP_COMPACT, COMPOSER_GAP_ROOMY, COMPOSER_GAP_THEME, COMPOSER_SCOPE_ALL, COMPOSER_SCOPE_CONVERSATION, COMPOSER_SCOPE_HERO, CONVERSATION_COMPOSER_REQUIRES } from '../../constants'
 import type { FeatureManifest } from '../../core/feature'
 
 export default {
   id: 'composer',
   order: 20,
-  contracts: ['chat.scroller', 'composer.attachment-rail', 'composer.bar', 'composer.dialog-trigger', 'composer.input', 'composer.mobile-portrait', 'composer.placeholder', 'composer.placeholder-attribute', 'composer.seat', 'composer.stack', 'composer.variant', 'header.conversation-tabs', 'shell.phase'],
+  contracts: ['chat.content', 'chat.main-slot', 'chat.scroller', 'composer.access-trigger', 'composer.activity-slot', 'composer.attachment-rail', 'composer.bar', 'composer.composing', 'composer.dialog-trigger', 'composer.input', 'composer.mobile-portrait', 'composer.placeholder', 'composer.placeholder-attribute', 'composer.right-slot', 'composer.seat', 'composer.standard-controls', 'composer.stack', 'composer.variant', 'conversation.view-context', 'conversation.view-stats', 'conversation.view-storage', 'conversation.view-trajectory', 'shell.phase'],
   pref: 'composerScope',
   prefValues: [COMPOSER_SCOPE_HERO, COMPOSER_SCOPE_CONVERSATION, COMPOSER_SCOPE_ALL],
   stylesheets: [
@@ -13,6 +13,7 @@ export default {
     { file: 'inline.css', rank: 90, gate: true },
     { file: 'inline-bar.css', rank: 100, gate: true },
     { file: 'bottom-gap.css', rank: 101, gate: true },
+    { file: 'responsive.css', rank: 102, gate: true },
   ],
   settingsRows: [{
     tab: 'composer',
@@ -33,12 +34,8 @@ export default {
       [COMPOSER_GAP_THEME]: 'gapTheme',
       [COMPOSER_GAP_ROOMY]: 'gapRoomy',
     },
-    // The gap sits under the conversation's composer, which only these two scopes restyle.
-    requires: {
-      pref: 'composerScope',
-      values: [COMPOSER_SCOPE_CONVERSATION, COMPOSER_SCOPE_ALL],
-      note: 'conversationComposerNote',
-    },
+    requires: CONVERSATION_COMPOSER_REQUIRES,
   }],
-  cases: ['composer', 'sync-fault', 'hero', 'late-forms']
+  cases: ['composer', 'sync-fault', 'hero', 'late-forms'],
+  scenarios: ['composerViewport', 'usernameIme', 'streamPace', 'streamJitter', 'streamJitterFooter', 'streamJitterInline'],
 } satisfies FeatureManifest

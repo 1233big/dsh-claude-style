@@ -102,11 +102,9 @@ body[data-dsh-claude-style] [data-dsh-claude-transcript] [data-composer-seat] {
 body[data-dsh-claude-style] [data-dsh-claude-part~="view-area"] {
   padding-bottom: var(--dsh-composer-fade-h, 40px);
 }
-/* The composer is a chat-view affordance. The host keeps the seat mounted on
-   every conversation tab (轨迹 / 上下文 even reserve room for it), but it
-   should only show on the chat tab — drop the whole bottom area otherwise.
-   Hiding the seat also zeroes the host's --dsh-composer-height, so the
-   trajectory ledger's bottom clearance collapses with it. */
+/* Inspection views drop the whole bottom area; chat, reader and plugin content
+   views keep it. Hiding the seat also zeroes the host's --dsh-composer-height,
+   so the trajectory ledger's bottom clearance collapses with it. */
 body[data-dsh-claude-style] [data-dsh-claude-composer-hidden] [data-composer-seat] {
   display: none !important;
 }
@@ -303,7 +301,7 @@ body[data-dsh-claude-style] [data-dsh-claude-part~="composer-stack"]:not([data-c
   height: auto;
   line-height: 24px;
   padding: 0;
-  font-size: 14px;
+  font-size: calc(14px * var(--dsh-claude-interface-font-scale, 1));
   width: 100%;
   max-width: 100%;
   box-sizing: border-box;
@@ -324,7 +322,7 @@ body[data-dsh-claude-style] [data-dsh-claude-part~="composer-stack"]:not([data-c
   right: 0;
   max-width: 100%;
   box-sizing: border-box;
-  font-size: 14px;
+  font-size: calc(14px * var(--dsh-claude-interface-font-scale, 1));
   color: var(--dsw-alias-label-caption);
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -338,7 +336,7 @@ body[data-dsh-claude-style] [data-dsh-claude-part~="composer-stack"]:not([data-c
 body[data-dsh-claude-style] [data-composer-card][data-composer-variant="inline"] button[data-dsh-claude-control="stop"],
 body[data-dsh-claude-style] [data-dsh-claude-part~="composer-stack"]:not([data-composer-variant="hero"]) [data-composer-card] button[data-dsh-claude-control="stop"] {
   position: absolute;
-  bottom: 40px;
+  bottom: calc(var(--dsh-claude-composer-toolbar-height, 28px) + 12px);
   right: 8px;
   top: auto;
   left: auto;
@@ -444,6 +442,13 @@ body[data-dsh-claude-style] [data-dsh-claude-part~="composer-stack"]:not([data-c
   height:  4px;
   border-radius: 1.2px;
   background: currentColor;
+}
+/* One place holds one of the two primary buttons a running continuable subagent
+   carries, the other kept off the page by the pass (composer.ts, HIDDEN_ATTR);
+   the selectors repeat the placement's own so this later rule ties it. */
+body[data-dsh-claude-style] [data-composer-card][data-composer-variant="inline"] button[data-dsh-claude-control-hidden],
+body[data-dsh-claude-style] [data-dsh-claude-part~="composer-stack"]:not([data-composer-variant="hero"]) [data-composer-card] button[data-dsh-claude-control-hidden] {
+  display: none;
 }
 /* Toolbar row below input card. The part names the host's own `row`: the shipped
    input growth wrapper is `grow`, a different local name, so the fixed 28px

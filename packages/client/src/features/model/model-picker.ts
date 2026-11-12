@@ -1,20 +1,23 @@
 import { SLOT_NODE_ATTR } from '../../constants'
 import { MODEL_OFFICIAL_GROUP } from './model-labels'
+import { modelGroupName } from './provider-name'
 import { activeLocale } from '../../core/i18n'
 import { ensureSeatBox, ensureSeatPart } from './seat-box'
 import type { SeatPart } from './seat-box'
 import { loadModelCopy } from './model-copy'
 import { readPrefs } from '../../core/prefs'
-import { findModelSlot } from '@dsh-claude-style/engine/host'
+import { findPrimaryModelSlot, withSlots } from '@dsh-claude-style/engine/host'
 import { createModelCatalog } from './catalog'
+import { MODEL_SLOT_KEY, thirdPartyHoldsSeat } from './seat-ledger'
 import { createModelSubMenu } from './sub-menu'
 import { byModelId, createModelRows } from './rows'
 import { releaseTag } from './release-tag'
-import { buildElement, setAttributeIfChanged } from '@dsh-claude-style/engine/dom'
+import { buildElement, closestFrom, setAttributeIfChanged } from '@dsh-claude-style/engine/dom'
 import { removeStrayNodes, pressKeepsPopoverOpen } from '../../shared/popover'
-import { setSwappingText } from '../../shared/swapping-text'
+import { releaseSwappingText, setSwappingText } from '../../shared/swapping-text'
 import type { HostContext } from '@dsh-claude-style/engine/host'
-import type { HostModelGroup } from '@dsh-claude-style/contracts/services'
+import { COMPOSER_INPUT_SELECTOR } from '@dsh-claude-style/contracts/dom'
+import type { HostModelDirectory, HostModelGroup, HostSlotsService } from '@dsh-claude-style/contracts/services'
 import type { CloseReason, FeatureHandle } from '@dsh-claude-style/engine/scheduler'
 import type { FeatureUi } from '../../core/feature'
 import type manifest from './model-picker.manifest'
@@ -40,7 +43,15 @@ export interface ModelHandle extends FeatureHandle {
   teardown(): void
 }
 
-export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
+export interface ModelPickerMount {
+  slot?: HTMLElement
+  directory?: HostModelDirectory
+  popoverKey?: string
+  owner?: string
+  disabled?: boolean
+}
+
+export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>, mount: ModelPickerMount = {}) {
   /**
    * The host's model seat is a click-triggered two-pane menu (Model /
    * Effort rows drilling into their own lists). The skin replaces it with
@@ -62,6 +73,20 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
   let seatBox: HTMLElement | null = null
   /** The host slot the seat lives in; the effort picker anchors there too. */
   let modelSlot: HTMLElement | null = null
+  /**
+   * The slot registry the yield decision reads, from the scope that injected
+   * it: the plugin's own context hands no registry out (D75), so the seat's
+   * ledger is read from the injected scope alone. Null while the host serves
+   * no registry — the seat then keeps the skin self-drawn.
+   */
+  let slots: HostSlotsService | null = null
+  const slotsFiber = withSlots(ctx, (served, scope) => {
+    slots = served
+    scope.effect(() => () => { slots = null }, 'dsh-claude-style: model seat registry')
+    // Rows already hidden by a winner that arrived before this scope did wait
+    // on the pass this arrival asks for.
+    ui.schedule?.()
+  })
   let modelBodySig = ''
   /**
    * The catalog half of the picker (packages/client/src/features/model/catalog.ts):
@@ -70,6 +95,7 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
    */
   const modelCatalog = createModelCatalog({
       ctx,
+      directory: mount.directory,
       schedule() { if (ui.schedule) ui.schedule() }
   })
 
@@ -103,6 +129,8 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
    * when its card is first built.
    */
   const cards = createModelCards({
+    popoverKey: mount.popoverKey,
+    owner: mount.owner,
     onOpen() {
       const dir = modelCatalog.directory()
       // load() is async — the host itself guards with .catch(() => {}); a bare
@@ -153,7 +181,9 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
         const peakrate = ui.peakrate
         if (peakrate === undefined) return null
         return peakrate.badge(provider, modelId)
-      }
+      },
+      /** Both cards hang above the seat: a fold's new height moves their top. */
+      reposition: () => cards.position(),
   })
 
   /**
@@ -178,23 +208,12 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
   }
 
   /**
-   * What the rows' rates depend on, in one value the render signatures carry.
-   * The catalog is the meter feature's (its generation moves when one arrives).
-   * The minute is not part of it: a closed card is not repainted by the clock,
-   * and the minute reaches the rows through refreshRateBadges instead.
-   */
-  function rateSignature() {
-    const peakrate = ui.peakrate
-    if (peakrate === undefined) return ''
-    return `${peakrate.epoch()}`
-  }
-
-  /**
    * Swap both cards' rate meters for the current ones (rows.ts owns the rows
    * and their identity). The badge is the one minute-sensitive part of a row
-   * (the countdown to the rate switch), and the card open and the minute
-   * rollover call this instead of the full paint: with a four-digit catalog
-   * the full paint is the open lag the feature cannot afford on every open.
+   * (the countdown to the rate switch), and the card open, the minute
+   * rollover and an arriving catalog call this instead of the full paint: a
+   * page that reloads paints its rows before the catalog lands, and rebuilding
+   * them for the badges would flash the whole list.
    */
   function refreshRateBadges() {
     modelRows.refreshRates()
@@ -238,7 +257,7 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
     const status = snap ? snap.status : 'idle'
     const groups = (snap && snap.groups) || []
     const current = modelCatalog.current(snap)
-    let sig = [status, activeLocale(), current ? `${current.group.id}/${current.model.id}` : '', readPrefs().quickProviders.join(','), readPrefs().modelDescriptions !== false, rateSignature()].join('|')
+    let sig = [status, activeLocale(), current ? `${current.group.id}/${current.model.id}` : '', readPrefs().quickProviders.join(','), readPrefs().modelDescriptions !== false].join('|')
     sig += rowsSignature(groups)
     if (sig === modelBodySig) {
       modelRows.refreshRates()
@@ -266,13 +285,16 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
           const section = sections[s]
           // The official source needs no naming, and the first section needs
           // no rule: a bare line above the list would be one line too many.
-          const sectionLabel = section.id === MODEL_OFFICIAL_GROUP ? '' : (section.name || section.id)
-          if (sectionLabel !== '' || s > 0) modelBody.appendChild(modelRows.buildProviderRule(sectionLabel))
+          const sectionLabel = section.id === MODEL_OFFICIAL_GROUP ? '' : modelGroupName(section.id, section.name)
           const sectionModels = section.models.slice().sort(byModelId)
-          for (let m = 0; m < sectionModels.length; m++) {
-            const selected = current !== null && current.group.id === section.id && current.model.id === sectionModels[m].id
-            modelBody.appendChild(modelRows.buildModelOption(section, sectionModels[m], selected, true))
+          if (s === 0 && sectionLabel === '') {
+            for (const model of sectionModels) {
+              const selected = current !== null && current.group.id === section.id && current.model.id === model.id
+              modelBody.appendChild(modelRows.buildModelOption(section, model, selected, true))
+            }
+            continue
           }
+          modelBody.appendChild(modelRows.buildProviderGroup(section, sectionModels, sectionLabel, current, true))
         }
       }
       // The current seat is surfaced under the list when none of the sections
@@ -288,7 +310,7 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
       if (current !== null && !currentListed) {
         // The divider above already draws a line, so a provider that needs no
         // naming (the official source) adds nothing here.
-        const currentRuleName = current.group.id === MODEL_OFFICIAL_GROUP ? '' : (current.group.name || current.group.id)
+        const currentRuleName = current.group.id === MODEL_OFFICIAL_GROUP ? '' : modelGroupName(current.group.id, current.group.name)
         if (currentRuleName !== '') modelBody.appendChild(modelRows.buildProviderRule(currentRuleName))
         // Through the same row builder as every other row, so this one carries
         // the same brand hook, description and peak rate meter.
@@ -299,9 +321,11 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
       // scrolls under them while the row stays reachable. The effort slider
       // is not here any more: it has its own trigger and card.
       if (cards.footer()) {
-        // "More models" carries what level 1 does not. With every provider
-        // already on screen the row would only open an empty card, so it goes
-        // away with the last remaining provider.
+        // "More models" carries what level 1 does not. A first level that
+        // already lists every provider leaves it nothing to carry, so the row
+        // goes away with the last remaining provider (issue #286): the search
+        // field is still reached by typing a key on level 1 (onKey below), and
+        // the second level lists the whole catalog once it is opened that way.
         const showMore = modelRows.remainingGroups(groups, sections).length > 0
         // The divider exists to close the list off from what follows it. With
         // no More-models row there is nothing left to close off, and a bare
@@ -325,10 +349,22 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
     const sections = modelRows.levelOneSections(groups)
     const listed: string[] = []
     for (let s = 0; s < sections.length; s++) listed.push(sections[s].id)
-    let sig = `more|${listed.join(',')}|${rateSignature()}`
+    let sig = `more|${listed.join(',')}`
     sig += rowsSignature(groups)
     if (current) sig += `#${current.group.id}/${current.model.id}`
     return sig
+  }
+
+  /**
+   * Let a label's swap go before its node leaves the page. The swap keeps a
+   * frame, a timer and a size subscription of its own (shared/swapping-text.ts);
+   * none of them follows the node out, and the size registry holds them by
+   * strong reference, so a trigger rebuilt or dropped without this leaves its
+   * sizer and its subscription behind for the page's lifetime.
+   */
+  function releaseModelLabels(scope: ParentNode = document) {
+    const labels = scope.querySelectorAll<HTMLElement>('.dsh-claude-model-btn-label')
+    for (let i = 0; i < labels.length; i++) releaseSwappingText(labels[i])
   }
 
   /**
@@ -336,13 +372,14 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
    * skin's trigger and popovers, drop the catalog subscription.
    */
   function dropModelControl() {
-    const allHosts = document.querySelectorAll('[data-dsh-claude-model-host]')
+    const allHosts = (modelSlot ?? document).querySelectorAll('[data-dsh-claude-model-host]')
     for (let h = 0; h < allHosts.length; h++) {
       allHosts[h].removeAttribute('data-dsh-claude-model-host')
     }
-    removeStrayNodes(document, '.dsh-claude-model-seat', [])
+    releaseModelLabels()
+    removeStrayNodes(modelSlot ?? document, '.dsh-claude-model-seat', [])
     seatBox = null
-    removeStrayNodes(document, '.dsh-claude-model-btn', [])
+    removeStrayNodes(modelSlot ?? document, '.dsh-claude-model-btn', [])
     modelBtn = null
     cards.dropNodes()
     modelBodySig = ''
@@ -354,7 +391,17 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
     // The picker's own switch tears this feature down, so the composer restyle
     // is the one way left to be off the page: it hands the host's own model
     // seat and menu back through the same sweep.
-    if (ui.composer?.isActive() !== true) {
+    if (mount.slot === undefined && ui.composer?.isActive() !== true) {
+      dropModelControl()
+      return
+    }
+
+    // A third-party winner holding the model seat takes the whole seat: the
+    // skin's trigger and cards come down and the node the host renders for
+    // the winner stands unmarked and reachable (issue #218). The reasoning
+    // level's button lives in the same box, so it goes with this drop and
+    // returns on the pass the seat comes back (features/effort/effort-picker.ts).
+    if (thirdPartyHoldsSeat(slots)) {
       dropModelControl()
       return
     }
@@ -364,25 +411,34 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
     loadModelCopy()
     modelCatalog.directory()
     modelCatalog.warm()
-    const slot = findModelSlot()
+    // The seat stands in the page's main composer: a sub-agent's docked
+    // conversation draws a card of its own, and the shell the reader types in
+    // must not lose its model seat to one (engine/host.ts::findPrimaryModelSlot).
+    const slot = mount.slot ?? findPrimaryModelSlot()
     modelSlot = slot
     if (slot === null) return
     // Hide the host's own seat (React owns the node; re-mark on swap).
     // Idempotent against a torn-down-less reload, like the account footer:
     // client HMR drops the old fiber's disposals, so a previous generation's
     // trigger and popovers are still in the DOM while this fresh scope starts
-    // from null. Sweep the strays, or the seat renders twice.
+    // from null. Sweep the strays, or the seat renders twice. The popovers'
+    // own sweep runs once at install: it walks the whole document, and this
+    // path runs every pass.
     removeStrayNodes(slot, '.dsh-claude-model-seat', [seatBox])
     removeStrayNodes(slot, '.dsh-claude-model-btn', [modelBtn])
-    removeStrayNodes(document, 'body > .dsh-claude-model-popover', [cards.popover(), cards.subPopover()])
     // The host's own seat root, not the nodes the skin appended beside it: a
     // swap can put React's node after ours, and the effort level and the
-    // context meter's ring stand in the same slot.
+    // context meter's ring stand in the same slot. It is hidden only while the
+    // skin draws the effort slider: with that switch off the host's own seat —
+    // and any third-party effort control mounted in this slot — stays visible
+    // and reachable (issue #183).
     const hostRoot = slot.querySelector(`:scope > :not([${SLOT_NODE_ATTR}])`)
-    if (hostRoot !== null) hostRoot.toggleAttribute('data-dsh-claude-model-host', true)
+    if (hostRoot !== null) hostRoot.toggleAttribute('data-dsh-claude-model-host', readPrefs().effortSlider === true)
     seatBox = ensureSeatBox(slot, seatBox)
     const modelPart = ensureSeatPart(seatBox, 'model')
     if (modelBtn === null || modelBtn.parentElement !== modelPart) {
+      // The old trigger carries the old label: its swap goes before the node does.
+      if (modelBtn !== null) releaseModelLabels(modelBtn)
       if (modelBtn !== null && modelBtn.parentElement !== null) modelBtn.parentElement.removeChild(modelBtn)
       modelBtn = document.createElement('button')
       modelBtn.type = 'button'
@@ -455,7 +511,7 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
     // host's own label reads the badge beside the words.
     const triggerAria = copy('triggerLabel', { model: label }) + (seatTag === null ? '' : ` ${seatTag}`)
     setAttributeIfChanged(modelBtn, 'aria-label', triggerAria)
-    modelBtn.disabled = false
+    modelBtn.disabled = mount.disabled === true
 
     renderModelBody()
     if (cards.subOpen()) {
@@ -466,6 +522,23 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
       cards.position()
     }
   }
+
+  /**
+   * The ledger's own change signal (the host's slots/changed event): a plugin
+   * registering or handing back re-renders the seat inside the conversation
+   * column, whose mutation batches skip this feature (skipOnContentOnly), so
+   * the pass that re-reads the winner rides this event. It names no key filter:
+   * slot changes are rare, and the pass the wake buys is the same one the
+   * ledger's read needs. A host without the event answers the swap's other
+   * wakes (a seat resize) a frame later instead.
+   */
+  if (typeof ctx.on === 'function') {
+    ctx.effect(() => ctx.on!('slots/changed', () => { ui.schedule?.() }), 'dsh-claude-style: model seat ledger')
+  }
+
+  // One sweep of this generation's strays, before the first pass: a document
+  // walk belongs here rather than on the pass, which runs every frame.
+  cards.sweep()
 
   ui.model = {
     sync: syncModelControl,
@@ -485,6 +558,25 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
         return
       }
       cards.closeAll()
+    },
+    /**
+     * A printable key while the first level is up opens the second one and
+     * starts the query: the reader looks a model up by typing, and the search
+     * field needs no detour through the More-models row to be reached.
+     */
+    onKey(event: KeyboardEvent) {
+      if (!cards.mainOpen()) return
+      if (event.key.length !== 1 || event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return
+      // The field the reader is typing in keeps every key: the composer's own
+      // field holds the message under the picker, and the search field holds
+      // the query the reader is typing.
+      if (closestFrom(event.target, COMPOSER_INPUT_SELECTOR) !== null) return
+      const modelSub = cards.sub()
+      if (modelSub !== null && modelSub.focused()) return
+      event.preventDefault()
+      cards.openSub(true)
+      const open = cards.sub()
+      if (open !== null) open.type(event.key)
     },
     /**
      * What the effort picker (a separate fragment that owns the level's
@@ -543,6 +635,7 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
       modelSlot = null
       seatBox = null
       cards.dispose()
+      if (slotsFiber !== null) slotsFiber.dispose()
     }
   }
 

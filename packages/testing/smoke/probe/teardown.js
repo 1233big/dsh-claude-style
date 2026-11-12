@@ -62,7 +62,7 @@
       // The custom brand's values ride <body>'s own style (features/brand/brand.ts).
       r.leftBrandProperties = Array.prototype.filter.call(document.body.style, function (name) { return name.indexOf('--dsh-claude-custom-') === 0 })
       r.leftStylesheet = !!document.getElementById('dsh-claude-style-style')
-      if (probe.viewStrip) r.viewPill.left = probe.viewStrip.hasAttribute('data-dsh-claude-pill') || probe.viewStrip.hasAttribute('data-dsh-view-tabs') || probe.viewStrip.style.length > 0
+      if (probe.viewStrip) r.viewPill.left = probe.viewStrip.list.hasAttribute('data-dsh-claude-pill') || probe.viewStrip.row.hasAttribute('data-dsh-view-tabs') || probe.viewStrip.row.style.length > 0
       if (probe.viewRow) {
         // The row's own rules are off again: it centres nothing, takes presses,
         // and the plate is back to the host's plain box with no pill on it.
@@ -72,7 +72,9 @@
           listStyle.borderTopLeftRadius === '7px' || listStyle.paddingLeft === '2px' || listStyle.backgroundColor !== 'rgba(0, 0, 0, 0)'
       }
       if (r.search) {
-        r.search.left = document.querySelectorAll('[data-dsh-claude-search-row], .dsh-claude-search-trigger, .dsh-claude-search-bar').length
+        r.search.left = (window.__slots || []).filter(function (entry) {
+          return entry.id === 'dsh-claude-style.search' || entry.seat === 'dsh-claude-style.search'
+        }).length
         r.search.rootUnmounted = !!probe.searchRoot && probe.searchRoot.unmounted
       }
       r.leftDraftMarks = document.querySelectorAll('[data-dsh-claude-draft-empty]').length

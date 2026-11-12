@@ -19,34 +19,38 @@
     // frame a few milliseconds later, inside the second the check counts.
     await probe.settle(250)
     if (window.SMOKE_TIER !== 'quick') {
-      var from = window.__passes
-      var mark = performance.now()
-      await sleep(1000)
-      r.idlePasses = window.__passes - from
-      // Where the frames of that second landed, for the check's own detail.
-      r.idlePassTimes = window.__passTimes
-        .filter(function (t) { return t >= mark })
-        .map(function (t) { return Math.round(t - mark) })
+      // A pass inside the sample means the page had not settled yet: let that
+      // activity finish, then take a fresh whole-second sample. A page that keeps
+      // asking for passes still fails when no idle window arrives by the deadline.
+      var deadline = performance.now() + 8000
+      for (;;) {
+        var from = window.__passes
+        var mark = performance.now()
+        await sleep(1000)
+        r.idlePasses = window.__passes - from
+        // Where the frames of that second landed, for the check's own detail.
+        r.idlePassTimes = window.__passTimes
+          .filter(function (t) { return t >= mark })
+          .map(function (t) { return Math.round(t - mark) })
+        if (r.idlePasses === 0 || performance.now() >= deadline) break
+        await probe.settle(250)
+      }
     }
-    // The host's statistics are hidden outright, in both of its shapes: the
-    // figures stay in the document as the read's own click targets, and their
-    // dialogs are read into the context popover instead (the 'default' case
-    // below). The host marks each figure since its 2026-09 update and marked the
-    // container around them before, so both marks are checked.
-    var statsFigures = Array.prototype.slice.call(document.querySelectorAll('[data-composer-stat], [data-composer-stats]'))
+    // The host's statistics are hidden outright: the figures stay in the
+    // document as the read's own click targets, and their dialogs are read into
+    // the context popover instead (the 'default' case below).
+    var statsFigures = Array.prototype.slice.call(document.querySelectorAll('[data-composer-stat]'))
     r.statsHidden = statsFigures.length > 0 && statsFigures.every(function (el) { return getComputedStyle(el).display === 'none' })
     r.statsStrayCards = document.querySelectorAll('.dsh-claude-stats-popover').length
-    // The session list's leading seat. The host's newer rows render it through a
-    // slot outlet, so an idle row's seat is not :empty — the circle has to hang
-    // on the empty outlet anchor. A seat carrying the running status dot keeps
-    // its own paint and gets no circle.
+    // The host's idle outlet stays mounted without painting a decorative circle;
+    // a native running indicator remains visible in its trailing cell.
     var seats = document.querySelectorAll('[data-dsh-claude-part~="session-row"] [data-dsh-claude-part~="row-slot"]')
     function seatState(seat) {
       if (!seat) return null
       var outlet = seat.querySelector(':scope > [data-slot]')
       var target = outlet !== null ? outlet : seat
       var after = getComputedStyle(target, '::after')
-      return { content: after.content, width: after.width, border: after.borderTopWidth, svgs: seat.querySelectorAll('svg').length }
+      return { visibility: getComputedStyle(seat).visibility, content: after.content, width: after.width, border: after.borderTopWidth, svgs: seat.querySelectorAll('svg').length }
     }
     r.seatIdle = seatState(seats[0])
     r.seatRunning = seatState(seats[1])

@@ -1,4 +1,4 @@
-import { BAND_ANIMATION, same, check, basicChecks, commonChecks } from './_shared.mjs'
+import { BAND_ANIMATION, check, basicChecks, commonChecks } from './_shared.mjs'
 
 export default {
   'late-forms'(r) {
@@ -6,7 +6,7 @@ export default {
     check('the store stays on the defaults (the studio home) until the namespace is served',
       r.lateBefore === 'studio', JSON.stringify(r.lateBefore))
     check('a namespace served after apply still binds the form and its value (classic)',
-      r.lateAfter === null && r.homeLayoutAttr === null,
+      r.lateAfter === 'classic' && r.homeLayoutAttr === 'classic',
       JSON.stringify({ after: r.lateAfter, final: r.homeLayoutAttr }))
     commonChecks(r)
   },
@@ -15,19 +15,19 @@ export default {
     const settings = r.settings || {}
     check('the settings section registers with the settings dialog', settings.registered === true, JSON.stringify(settings.registered))
     const expected = {
-      general: ['brand', 'username', 'pageZoom', 'autoPopover', 'sodium'],
-      appearance: ['brandLockup', 'brandInk', 'palette', 'paletteCards', 'typeface', 'homeLayout', 'homeRipple', 'mascot', 'mascotScope'],
-      'main-window': ['turnNav', 'conversationWidth', 'viewTabs', 'headerBand', 'composerScope', 'composerBottomGap', 'modelPicker', 'modelDescriptions', 'effortAccent', 'quickProviders', 'peakrate', 'contextDisplay', 'contextNumbers', 'statsPosition', 'statsFooterAlign', 'billingCurrency', 'permissionsControl'],
-      sidebar: ['collapseFooter', 'banLocale', 'sidebarSearch', 'searchStyle', 'workspaceView', 'sidebarPeek', 'dockCards', 'sidebarLayout'],
-      motion: ['motion', 'chatAnimations', 'chatWait', 'statusDetail', 'statusMotion', 'caretMotion', 'ongoingIndicator', 'chatReveal', 'chatSend', 'messageEnter'],
+      general: ['brand', 'username', 'pageZoom', 'interfaceFontSize', 'autoPopover', 'sodium', 'soundCues'],
+      appearance: ['sidebarBrand', 'brandLockup', 'brandInk', 'palette', 'paletteCards', 'backgroundOpacity', 'typeface', 'homeLayout', 'homeRipple', 'mascot', 'mascotScope'],
+      'main-window': ['turnNav', 'messageActions', 'conversationWidth', 'viewTabs', 'headerBand', 'processRows', 'answerAnchor', 'sessionPanel', 'composerScope', 'composerBottomGap', 'questionCard', 'permissionsControl', 'modelPicker', 'effortSlider', 'modelDescriptions', 'quickProviders', 'peakrate', 'effortAccent', 'contextDisplay', 'contextNumbers', 'statsPosition', 'statsFooterAlign', 'billingCurrency', 'billingTable'],
+      sidebar: ['collapseFooter', 'banLocale', 'sidebarSearch', 'searchStyle', 'sidebarEntries', 'workspaceView', 'sidebarPeek', 'sidebarLayout'],
+      motion: ['motion', 'chatAnimations', 'chatWait', 'statusDetail', 'statusMotion', 'chatReveal', 'chatSend', 'messageEnter', 'caretMotion', 'ongoingIndicator', 'ongoingIndicatorSide', 'reasoningDisplay'],
     }
-    // The main window's two groups, the conversation side above the composer's,
-    // each under its label and carrying its own rows: what used to be the
-    // Conversation and Composer tabs, and the statistics rows with the
-    // composer's billing display.
+    // The main window's three groups, each under its label and carrying its own
+    // rows: the conversation side, the composer's controls with the model
+    // picker's rows, and the context meter with the statistics and the billing.
     const mainWindowGroups = [
-      { label: 'Conversation', rows: ['turnNav', 'conversationWidth', 'viewTabs', 'headerBand'] },
-      { label: 'Composer', rows: ['composerScope', 'composerBottomGap', 'modelPicker', 'modelDescriptions', 'effortAccent', 'quickProviders', 'peakrate', 'contextDisplay', 'contextNumbers', 'statsPosition', 'statsFooterAlign', 'billingCurrency', 'permissionsControl'] },
+      { label: 'Conversation', rows: ['turnNav', 'messageActions', 'conversationWidth', 'viewTabs', 'headerBand', 'processRows', 'answerAnchor', 'sessionPanel'] },
+      { label: 'Composer', rows: ['composerScope', 'composerBottomGap', 'questionCard', 'permissionsControl', 'modelPicker', 'effortSlider', 'modelDescriptions', 'quickProviders', 'peakrate', 'effortAccent'] },
+      { label: 'Context and cost', rows: ['contextDisplay', 'contextNumbers', 'statsPosition', 'statsFooterAlign', 'billingCurrency', 'billingTable'] },
     ]
     // Greyed by the page itself rather than by a preference: the title-bar
     // band waits for the Windows desktop window, and the footer alignment for
@@ -77,20 +77,24 @@ export default {
         typeof paletteCard(customCards, 'custom').reset === 'string' && paletteCard(customCards, 'custom').reset.length > 0,
       JSON.stringify(customCards))
     const off = settings.parentsOff || {}
-    check('a sub-row greys out while its parent is off: the accent colour with the colours following the host, the mascot\'s place with the mascot off, the model descriptions, the effort accent colour, the quick providers and the peak rate meter with the model picker off, the search box\'s style with the sidebar search off, and the title-bar band for the window on every page',
+    check('a sub-row greys out while its parent is off: the accent colour with the colours following the host, the mascot\'s place with the mascot off, the model descriptions, the effort accent colour, the quick providers and the peak rate meter with the model picker off, the custom price table with the billing off, the search button\'s style with the sidebar search off, and the title-bar band for the window on every page',
       !!off.appearance && JSON.stringify(off.appearance.disabled) === '["mascotScope"]' &&
-        !!off.mainWindow && JSON.stringify(off.mainWindow.disabled) === '["headerBand","modelDescriptions","effortAccent","quickProviders","peakrate","statsFooterAlign"]' &&
+        !!off.mainWindow && JSON.stringify(off.mainWindow.disabled) === '["headerBand","effortSlider","modelDescriptions","quickProviders","peakrate","effortAccent","statsFooterAlign","billingTable"]' &&
         !!off.sidebar && JSON.stringify(off.sidebar.disabled) === '["searchStyle"]',
       JSON.stringify(off))
+    const offAppearance = (off.appearance || {}).rows || []
+    check('the colour cards and the background opacity stand only under the skin\'s own palette: following the host leaves neither on the tab',
+      offAppearance.indexOf('paletteCards') === -1 && offAppearance.indexOf('backgroundOpacity') === -1,
+      JSON.stringify(offAppearance))
     const unmet = settings.requirementsOff || {}
     check('with the composer restyle off, the model picker with its sub-rows, the permission control and the statistics\' figures grey out, the two switches and the statistics rows saying what they wait for; with the footer takeover off, so does the easter egg under it',
-      !!unmet.mainWindow && JSON.stringify(unmet.mainWindow.disabled) === '["headerBand","composerBottomGap","modelPicker","modelDescriptions","effortAccent","quickProviders","peakrate","contextDisplay","contextNumbers","statsPosition","statsFooterAlign","billingCurrency","permissionsControl"]' &&
-        JSON.stringify(unmet.mainWindow.notes) === '["headerBand","composerBottomGap","modelPicker","contextDisplay","contextNumbers","statsPosition","statsFooterAlign","billingCurrency","permissionsControl"]' &&
+      !!unmet.mainWindow && JSON.stringify(unmet.mainWindow.disabled) === '["headerBand","composerBottomGap","permissionsControl","modelPicker","effortSlider","modelDescriptions","quickProviders","peakrate","effortAccent","contextDisplay","contextNumbers","statsPosition","statsFooterAlign","billingCurrency","billingTable"]' &&
+        JSON.stringify(unmet.mainWindow.notes) === '["headerBand","composerBottomGap","permissionsControl","modelPicker","contextDisplay","contextNumbers","statsPosition","statsFooterAlign","billingCurrency","billingTable"]' &&
         !!unmet.sidebar && JSON.stringify(unmet.sidebar.disabled) === '["banLocale"]' && JSON.stringify(unmet.sidebar.notes) === '[]',
       JSON.stringify(unmet))
     const hero = settings.heroOnly || {}
     check('with the restyle on the home page alone, the picker and the permission control take input, the statistics\' position still waits for a conversation and the title-bar band for the window',
-      !!hero.mainWindow && JSON.stringify(hero.mainWindow.disabled) === '["headerBand","composerBottomGap","contextDisplay","contextNumbers","statsPosition","statsFooterAlign","billingCurrency"]',
+      !!hero.mainWindow && JSON.stringify(hero.mainWindow.disabled) === '["headerBand","composerBottomGap","contextDisplay","contextNumbers","statsPosition","statsFooterAlign","billingCurrency","billingTable"]',
       JSON.stringify(hero))
     const pageZoom = settings.pageZoom || {}
     const zoomed = pageZoom.zoomed || {}
@@ -101,6 +105,22 @@ export default {
         shrunk.attr === '0.8' && shrunk.zoom === '0.8' &&
         following.attr === null && following.zoom === '1',
       JSON.stringify(pageZoom))
+    const control = settings.pageZoomControl || {}
+    const box = control.box || {}
+    const track = control.track || {}
+    const reset = control.reset || {}
+    const card = control.card || {}
+    check('the zoom row takes any percentage in one field, resets from the label beside it and opens a seekbar over the same range, closed until the field is asked for',
+      box.type === 'text' && box.value === '112' && box.placeholder === '100' && typeof box.label === 'string' && box.label.length > 0 &&
+        typeof reset.text === 'string' && reset.text.length > 0 &&
+        track.type === 'range' && track.min === 60 && track.max === 200 && track.step === 1 && track.value === 112 && typeof track.label === 'string' && track.label.length > 0 &&
+        card.open === 'false',
+      JSON.stringify(control))
+    const atDefault = settings.pageZoomAtDefault || {}
+    const defaultBox = atDefault.box || {}
+    check('the reset label stands only while the page is drawn away from the default size',
+      defaultBox.value === '100' && atDefault.reset === undefined,
+      JSON.stringify(atDefault))
     const link = settings.link || {}
     const mark = settings.mark || {}
     check('the heading carries the plugin\'s repository link, opening in a new tab with an accessible name',
@@ -156,52 +176,50 @@ export default {
       JSON.stringify(revealPreview))
     const ongoing = settings.ongoingCards || {}
     const ongoingCards = ongoing.cards || []
-    check('the ongoing-mark row is two cards carrying the pair a sidebar row leads with, the mark first and a title beside it: each card names its own mark, the stored choice alone is drawn as picked, and the sample takes no reading',
-      ongoingCards.length === 2 &&
-        ongoingCards.map((card) => card.look).join() === 'breathe,ring' &&
-        ongoingCards.every((card) => typeof card.label === 'string' && card.label.length > 0 &&
-          card.sample === true && typeof card.title === 'string' && card.title.length > 0) &&
-        ongoingCards[0].active === true && ongoingCards[0].pressed === 'true' &&
-        ongoingCards[1].active === false && ongoingCards[1].pressed === 'false',
+    const looks = ['breathe', 'ring', 'shimmer']
+    check('the ongoing-effect row names three independent cards, each carrying a decorative title before its marker, with only the default breathing choice pressed',
+      ongoingCards.length === 3 && ongoingCards.map(card => card.look).join() === looks.join() &&
+        new Set(ongoingCards.map(card => card.label)).size === 3 &&
+        ongoingCards.every(card => typeof card.label === 'string' && card.label.length > 0 &&
+          card.sample === true && card.titleFirst === true && typeof card.title === 'string' && card.title.length > 0 &&
+          card.active === (card.look === 'breathe') && card.pressed === String(card.look === 'breathe')),
       JSON.stringify(ongoingCards))
-    const marks = settings.ongoingMarks || {}
-    check('each card wears its own mark: the breathing dot is the idle seat\'s filled 6px circle pulsing on the shared breath, the ring a wider ring with a drawn track whose lit head turns on its own period',
-      marks.breathe?.width === '6px' && marks.breathe?.border === '0px' &&
-        marks.breathe?.animation === 'dsh-claude-pulse' && Number.parseFloat(marks.breathe?.duration) === 2.4 &&
-        marks.ring?.width === '10px' && parseFloat(marks.ring?.border) >= 1 &&
-        marks.ring?.animation === 'dsh-claude-ongoing-spin' && Number.parseFloat(marks.ring?.duration) === 0.85,
-      JSON.stringify(marks))
+    const [breathe, ring, shimmer] = ongoingCards
+    check('the carried preview parents give the breathing dot its opacity cadence, the ring its rotation and the shimmer title its sweep with no visible marker',
+      breathe?.markPaint?.animation === 'dsh-claude-status-breathe' && Number.parseFloat(breathe.markPaint.duration) === 1.2 &&
+        breathe.markPaint.visibility === 'visible' && breathe.titlePaint?.animation === 'none' &&
+        ring?.markPaint?.animation === 'dsh-claude-ongoing-spin' && Number.parseFloat(ring.markPaint.duration) === 0.85 &&
+        Number.parseFloat(ring.markPaint.width) > Number.parseFloat(breathe.markPaint.width) && Number.parseFloat(ring.markPaint.border) > 0 &&
+        ring.markPaint.visibility === 'visible' && ring.titlePaint?.animation === 'none' &&
+        shimmer?.titlePaint?.animation === 'dsh-claude-title-shine' && Number.parseFloat(shimmer.titlePaint.duration) === 3 &&
+        shimmer.markPaint?.visibility === 'hidden' && shimmer.markPaint.animation === 'none',
+      JSON.stringify(ongoingCards))
+    for (const look of looks) {
+      const cards = ongoing.choices?.[look] || []
+      check(`storing ${look} selects only that card and leaves every option's own preview independent`,
+        cards.length === 3 && cards.every((card, index) => card.look === looks[index] &&
+          card.active === (card.look === look) && card.pressed === String(card.look === look) &&
+          card.titlePaint?.animation === ongoingCards[index]?.titlePaint?.animation &&
+          card.markPaint?.animation === ongoingCards[index]?.markPaint?.animation &&
+          card.markPaint?.visibility === ongoingCards[index]?.markPaint?.visibility),
+        JSON.stringify(cards))
+    }
     const stored = settings.ongoingStored || {}
-    check('the reader\'s stored mark reaches the page and repaints the running row\'s own mark, live',
-      stored.ring?.attribute === 'ring' && stored.ring?.width === '10px' && stored.ring?.animation === 'dsh-claude-ongoing-spin' &&
-        stored.breathe?.attribute === 'breathe' && stored.breathe?.width === '6px' && stored.breathe?.animation === 'dsh-claude-pulse',
+    check('all three stored effects reach the native running row live, with the shimmer title and native marker mutually exclusive',
+      stored.ring?.attribute === 'ring' && stored.ring.mark?.animation === ring?.markPaint?.animation &&
+        stored.ring.mark?.visibility === 'visible' && stored.ring.title?.animation === 'none' &&
+        stored.breathe?.attribute === 'breathe' && stored.breathe.mark?.animation === breathe?.markPaint?.animation &&
+        stored.breathe.mark?.visibility === 'visible' && stored.breathe.title?.animation === 'none' &&
+        stored.shimmer?.attribute === 'shimmer' && stored.shimmer.applicable === true &&
+        stored.shimmer.mark?.visibility === 'hidden' && stored.shimmer.title?.animation === shimmer?.titlePaint?.animation,
       JSON.stringify(stored))
-    commonChecks(r)
-  },
-  'dock-cards'(r) {
-    basicChecks(r)
-    const dock = r.dock || {}
-    const card = dock.card || {}
-    const flush = dock.flush || {}
-    const back = dock.back || {}
-    const carded = (one) => one.radius === '16px' && parseFloat(one.border) > 0 &&
-      one.overflow === 'hidden' && one.shadow !== 'none'
-    const flat = (one) => one.margin === '0px' && one.radius === '0px' &&
-      parseFloat(one.border) === 0 && one.overflow === 'visible' && one.shadow === 'none'
-    check('every docked pane floats as the skin\'s card: 8px inside the column, a hairline, a 16px radius and the host\'s elevation',
-      card.look === 'card' && card.empty.margin === '8px' && card.pane.margin === '8px' &&
-        carded(card.empty) && carded(card.pane) && carded(card.left) && carded(card.right),
-      JSON.stringify(card))
-    check('a split comes in toward the seam, and the dock\'s own resting line goes',
-      card.left.margin === '6px 3px 6px 6px' && card.right.margin === '6px 6px 6px 3px' && card.divider === 'rgba(0, 0, 0, 0)',
-      JSON.stringify({ left: card.left, right: card.right, divider: card.divider }))
-    check('switching the cards off leaves every pane in the host\'s own fill, flush with the column, split panes included',
-      flush.look === 'flush' && flat(flush.empty) && flat(flush.pane) && flat(flush.left) && flat(flush.right),
-      JSON.stringify(flush))
-    check('and the dock\'s own resting line is back between the flush panes',
-      flush.divider === 'rgb(0, 0, 255)', JSON.stringify(flush.divider))
-    check('switching them back on brings the cards back without a reload',
-      back.look === 'card' && same(back, card), JSON.stringify(back))
+    const reduced = settings.ongoingReduced || {}
+    check('reduced motion keeps all three previews static and restores the visible native marker for the stored shimmer choice',
+      reduced.cards?.length === 3 && reduced.cards.every(card => card.titlePaint?.animation === 'none' &&
+        card.markPaint?.animation === 'none' && card.markPaint.visibility === 'visible') &&
+        reduced.running?.attribute === 'shimmer' && reduced.running.title?.animation === 'none' &&
+        reduced.running.mark?.animation === 'none' && reduced.running.mark.visibility === 'visible',
+      JSON.stringify(reduced))
     commonChecks(r)
   },
   switches(r) {
@@ -220,13 +238,38 @@ export default {
     check('all switches off leave no switched feature on the page',
       !!sw.allOff && keys.every((key) => !present(sw.allOff, key)), JSON.stringify(sw.allOff))
     check('all switches back on bring every feature back', !!sw.allOn && keys.every((key) => present(sw.allOn, key)), JSON.stringify(sw.allOn))
+    const view = sw.view || {}
+    const dateView = sw.dateView || {}
+    check('the date view stays off until the bell is pressed, and the bell gives the reader\'s grouping back',
+      dateView.start === 'workspace' && dateView.on === 'flat' && dateView.off === 'workspace',
+      JSON.stringify(dateView))
+    const archivedView = view.archived || {}
+    const activeView = view.active || {}
+    check('the 已归档 segment drives the host\'s own view: archived rows alone in one flat list, and the segment checked',
+      archivedView.snapshot?.archivedFilter === 'only' && archivedView.snapshot?.groupBy === 'flat' &&
+        archivedView.checked === 'true',
+      JSON.stringify(archivedView))
+    check('the 进行中 segment puts the filter back with the date view\'s own flat list standing before the visit, and stands checked again',
+      activeView.snapshot?.archivedFilter === 'default' && activeView.snapshot?.groupBy === 'flat' &&
+        activeView.checked === 'true',
+      JSON.stringify(activeView))
+    const flatView = sw.flat || {}
+    check('a 单列表 pick in the host\'s own view menu stands, and 已归档 brings it back instead of dropping it',
+      flatView.picked?.snapshot?.groupBy === 'flat' && flatView.archived?.snapshot?.groupBy === 'flat' &&
+        flatView.active?.snapshot?.groupBy === 'flat',
+      JSON.stringify(flatView))
+    const reinstall = sw.reinstall || {}
+    check('a store left on 已归档 comes back on that segment when the feature installs again',
+      reinstall.snapshot?.archivedFilter === 'only' && reinstall.snapshot?.groupBy === 'flat' &&
+        reinstall.checked === 'true',
+      JSON.stringify(reinstall))
     const rail = sw.rail || {}
-    check('the host dropping the section heading takes the workspace control and the archived list off the page with it',
-      !!rail.wide && rail.wide.segments > 0 && !!rail.collapsed &&
-        rail.collapsed.segments === 0 && rail.collapsed.list === 0,
+    check('the host dropping the section heading takes the workspace control off the page with it, leaving the host\'s own tree where it stands',
+      !!rail.wide && rail.wide.segments > 0 && rail.wide.rows > 0 && !!rail.collapsed &&
+        rail.collapsed.segments === 0 && rail.collapsed.rows === rail.wide.rows,
       JSON.stringify(rail))
-    check('the heading coming back seats both in the section again',
-      !!rail.back && rail.back.segments > 0 && rail.back.list > 0, JSON.stringify(rail.back))
+    check('the heading coming back seats the control in the section again',
+      !!rail.back && rail.back.segments > 0 && rail.back.rows === rail.wide.rows, JSON.stringify(rail.back))
     commonChecks(r)
   },
   'switches-off'(r) {

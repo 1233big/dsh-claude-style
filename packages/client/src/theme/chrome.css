@@ -91,22 +91,6 @@ html[data-windows-titlebar] body[data-dsh-claude-style] [data-dsh-claude-part~="
   pointer-events: none;
 }
 
-/* ---------- the right sidebar's panels as floating cards ---------- */
-/* A panel docked in the right column floats 8px inside the window: the skin's
-   hairline and the host's own panel elevation over the frame's canvas. It hangs on
-   what paints the column — a docked tab's pane, or the column's own empty host; a
-   panel pulled out into the host's floating window is left to that window. Every
-   card rule is gated on the dock-look attribute: with the settings page's
-   "Right sidebar card layout" off, no rule of the skin touches the pane and it
-   stands in the host's own fill, flush with the column. */
-body[data-dsh-claude-style][data-dsh-claude-dock-look="card"] [data-dsh-claude-part~="rightbar-column"] :is([data-dockkit-empty], [data-dockkit-host="dock"] > [data-dockkit-pane]) {
-  margin: 8px;
-  overflow: hidden;
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 16px;
-  box-shadow: var(--dsw-elevation-prominent);
-}
-
 /* The column's start page centers its stack in a box that never grows, so a list
    taller than the pane is clipped at both ends with no way to reach it. The stack
    scrolls instead: the two auto margins hold the centering while it fits and stay
@@ -127,10 +111,12 @@ body[data-dsh-claude-style] [data-dsh-claude-part~="rightbar-column"] [data-dsh-
    chosen factor, below 1 included. It sits on the body because that is the box
    the host's layout fills — the viewport's size in the scaled space, the host's
    own dialogs and menus and the skin's popovers still coming out at the
-   window's edges. A factor is one rule each: `zoom` cannot read the number out
-   of the attribute. "Follow the system" writes no attribute, so the page keeps
-   the size the system and the host give it. The skin's geometry reads the
-   factor back through shared/page-zoom.ts: it measures the viewport's pixels
+   window's edges. The factor itself rides a custom property
+   (--dsh-claude-page-zoom-factor, written by core/prefs.ts), so any percentage
+   the settings control lands on is one rule. At 100% the mirror writes neither
+   the attribute nor the property, so the page keeps the size the system and
+   the host give it. The skin's geometry reads the factor back through
+   shared/page-zoom.ts: it measures the viewport's pixels
    while these rules scale the space a `left` or a `top` is read in.
 
    At a factor other than one the body also wears the window's own size, in the
@@ -141,25 +127,25 @@ body[data-dsh-claude-style] [data-dsh-claude-part~="rightbar-column"] [data-dsh-
    window with an empty band under the shell; the body at the window's size
    keeps the shell at the window's edge, and every part of it scrolls inside
    its own box. */
-body[data-dsh-claude-style][data-dsh-claude-page-zoom="0.8"] {
-  zoom: 0.8;
-}
-
-body[data-dsh-claude-style][data-dsh-claude-page-zoom="1"] {
-  zoom: 1;
-}
-
-body[data-dsh-claude-style][data-dsh-claude-page-zoom="1.25"] {
-  zoom: 1.25;
-}
-
-body[data-dsh-claude-style][data-dsh-claude-page-zoom="1.5"] {
-  zoom: 1.5;
-}
-
-body[data-dsh-claude-style][data-dsh-claude-page-zoom]:not([data-dsh-claude-page-zoom="1"]) {
+/* The attribute stands for every factor but 100%, which the mirror writes as no
+   mark at all, so no rule here tests the attribute's value. */
+body[data-dsh-claude-style][data-dsh-claude-page-zoom] {
+  zoom: var(--dsh-claude-page-zoom-factor, 1);
+  /* Read before `zoom` and drawn through it: the 8px of the body's default
+     margin came out a factor wider and stood outside the box the body's own
+     `overflow` clips, so the page scrolled sideways past the window. */
   width: var(--dsh-claude-page-width, 100%);
   height: var(--dsh-claude-page-height, 100%);
+  overflow: hidden;
+  margin: 0;
+}
+
+/* The document element's own 8px is read the same way and clipped by nothing the
+   body states, so it goes too; the page drawn at a factor is the window's size,
+   and the document then has no scroll of its own to give the reader. The body's
+   mark is what this reads, the way the token layer reads the palette card. */
+html:has(body[data-dsh-claude-style][data-dsh-claude-page-zoom]) {
+  padding: 0;
   overflow: hidden;
 }
 
@@ -170,8 +156,14 @@ body[data-dsh-claude-style][data-dsh-claude-page-zoom]:not([data-dsh-claude-page
    one the two are the same length. A dialog opened by the host or by a plugin
    carries `role="dialog"` alone as often as it carries `aria-modal`, and a
    native `<dialog>` need carry neither, so the cap is matched by what the card
-   is rather than by the attribute beside the role. */
-body[data-dsh-claude-style] :is(dialog, [role="dialog"]) {
+   is rather than by the attribute beside the role. A full-window layer is not a
+   dialog card: dsh-video-skin's boot animation measures the window itself and
+   must keep the whole window at any scale (packages/contracts/src/table.ts,
+   issue #205), and the image preview's backdrop is the dialog the reader faces
+   while its own mask paints the dim fill (issue #278), so the cap steps aside
+   for both. Full-window host overlays also keep their own edges; only the
+   dialog card inside one takes this cap. */
+body[data-dsh-claude-style] :is(dialog, [role="dialog"]):not(.dsvs-boot, [data-dsh-claude-part~="overlay"], [data-dsh-claude-part~="backdrop"]) {
   max-width: calc(var(--dsh-claude-page-width, 100vw) - 48px);
   max-height: calc(var(--dsh-claude-page-height, 100vh) - 48px);
 }
@@ -221,11 +213,12 @@ body[data-dsh-claude-style][data-ds-dark-theme] button[data-dsh-claude-part~="br
   border-radius: 0;
 }
 
-body[data-dsh-claude-style]:not([data-ds-dark-theme]) button[data-dsh-claude-part~="brand-button"] {
+/* macOS desktop renders the non-interactive brand as a span (D3). */
+body[data-dsh-claude-style]:not([data-ds-dark-theme]) [data-dsh-claude-part~="brand-button"] {
   color: var(--dsh-claude-logo-ink);
 }
 
-body[data-dsh-claude-style][data-ds-dark-theme] button[data-dsh-claude-part~="brand-button"] {
+body[data-dsh-claude-style][data-ds-dark-theme] [data-dsh-claude-part~="brand-button"] {
   color: var(--dsh-claude-logo-ink);
 }
 
@@ -354,10 +347,10 @@ body[data-dsh-claude-style] [data-slot="conversation.session.header.actions"] > 
    only if the host changes its geometry. */
 
 /* The conversation header carries the host's own bottom border — the line under
-   the tabs; the transcript's top fade below takes over that job. Scoped by the
-   hold mark to the header that owns the tab strip, so no other header loses its
-   edge (D9). */
-body[data-dsh-claude-style] [data-dsh-claude-part~="conversation-header"][data-dsh-claude-holds~="view-tabs"] {
+   the tabs; the transcript's top fade below takes over that job. Scoped to the
+   header view-tabs has marked as its own, so no other header loses its edge and
+   a switched-off preference hands this one back its line (D9). */
+body[data-dsh-claude-style] [data-dsh-claude-part~="conversation-header"][data-dsh-view-tabs-taken] {
   border-bottom-color: transparent;
   /* The host's header rule sets no position, so it is static and an absolutely
      positioned band would anchor to a far ancestor. The stickiness lives on the
@@ -369,7 +362,7 @@ body[data-dsh-claude-style] [data-dsh-claude-part~="conversation-header"][data-d
 /* The transcript's top fade: the header already covers the transcript, so the
    band hangs off the header's own bottom edge and follows it. One knob,
    --dsh-transcript-fade-h, matching the composer's own fade. */
-body[data-dsh-claude-style] [data-dsh-claude-part~="conversation-header"][data-dsh-claude-holds~="view-tabs"]::after {
+body[data-dsh-claude-style] [data-dsh-claude-part~="conversation-header"][data-dsh-view-tabs-taken]::after {
   content: "";
   position: absolute;
   left: 0;
@@ -386,9 +379,86 @@ body[data-dsh-claude-style] [data-dsh-claude-part~="conversation-header"][data-d
    setting. Scoped to the skin's own class prefix so the host's transitions stay
    as the host wrote them; the prefix is matched as a whole class token, so a
    host or plugin class that merely holds the letters is not touched. One thing
-   keeps moving on purpose: the segmented controls' sliding pill. */
+   keeps moving on purpose: the segmented controls' sliding pill. An animation
+   whose shorthand carries an `!important` of its own, or whose selector outranks
+   this rule, takes its count from --dsh-claude-loop-count, which is set here. */
 body[data-dsh-claude-style][data-dsh-claude-motion="reduced"] :is([class^="dsh-claude-"], [class*=" dsh-claude-"]) {
   animation-duration: var(--dsh-claude-duration-reduced) !important;
   animation-iteration-count: 1;
+  --dsh-claude-loop-count: 1;
   transition-duration: var(--dsh-claude-duration-reduced);
+}
+
+/* ---------- the page off screen ---------- */
+/* The mark rides <body data-dsh-claude-asleep> (packages/client/src/core/page-visibility.ts, D40) while
+   the window is hidden: every animation on the page holds where it stands and
+   resumes there, so the page the reader comes back to is the page they left, and
+   no rule here paints anything. The host's own animations are held with the
+   skin's, because a frame the compositor runs for a window nobody sees costs the
+   same whoever wrote the animation, and catching those frames up is what stalls
+   the return. `*` reaches no pseudo-element and two of the skin's animations run
+   on ::before and ::after, so those get selectors of their own. `!important`
+   because two of the skin's animations write their `animation` shorthand with
+   it, and the shorthand's `running` outranks a plain longhand; the mark is spelt
+   twice because those two rules, and the skeleton's, come from feature sheets
+   later in the cascade at the specificity one mark reaches, so the pause has to
+   stand above them rather than beside them (the way caret.css's layer rule
+   repeats its own attribute). */
+body[data-dsh-claude-style][data-dsh-claude-asleep][data-dsh-claude-asleep] *,
+body[data-dsh-claude-style][data-dsh-claude-asleep][data-dsh-claude-asleep] *::before,
+body[data-dsh-claude-style][data-dsh-claude-asleep][data-dsh-claude-asleep] *::after {
+  animation-play-state: paused !important;
+}
+
+/* ---------- the background fill's opacity ---------- */
+/* Below 100 (settings › Appearance, Claude palette) the canvas paints mix
+   toward transparent and the window shows through (shared/background-opacity.ts
+   writes --dsh-claude-background-opacity from the body's mark; at 100 neither
+   the mark nor the property stands, so everything on this page is the pixel
+   it has always been). Only the fills the opacity names are restated — the
+   body and the root window, the sidebar, the conversation column and the
+   Windows titlebar fills; the text, the controls, the popovers and the
+   composer's tray keep their paint, and under a wallpaper the shell stands
+   down as it always does while the mask (theme/wallpaper.css) carries the
+   share instead. The mixes read the canvas through the host's alias, which
+   holds the same colour untinted. */
+body[data-dsh-claude-style][data-dsh-claude-palette="claude"]:not([data-we-wallpaper])[data-dsh-claude-background-opacity] {
+  background-color: color-mix(in srgb, var(--dsw-alias-bg-base) calc(var(--dsh-claude-background-opacity) * 100%), transparent);
+}
+
+body[data-dsh-claude-style][data-dsh-claude-palette="claude"]:not([data-we-wallpaper]):not([data-ds-dark-theme])[data-dsh-claude-background-opacity] #root {
+  background-color: color-mix(in srgb, var(--dsw-alias-bg-base) calc(var(--dsh-claude-background-opacity) * 100%), transparent);
+}
+
+/* The document element's own canvas is the one opaque wall between the page
+   and the window behind it: under an opacity it steps aside, the way a card's
+   own background does, so the share the reader asked for is the share that
+   reaches the window. */
+html:has(body[data-dsh-claude-style][data-dsh-claude-palette="claude"][data-dsh-claude-background-opacity]):not([data-ds-dark-theme]) {
+  background-color: transparent;
+}
+
+body[data-dsh-claude-style][data-dsh-claude-palette="claude"]:not([data-we-wallpaper])[data-dsh-claude-background-opacity] :is([data-pane="sidebar"], [data-dsh-claude-part~="sidebar-column"], .dshDesktopSidebarSurface) {
+  background: color-mix(in srgb, var(--dsh-claude-sidebar-canvas) calc(var(--dsh-claude-background-opacity) * 100%), transparent);
+}
+
+body[data-dsh-claude-style][data-dsh-claude-palette="claude"]:not([data-we-wallpaper])[data-dsh-claude-background-opacity] :is([data-pane="conversation"], [data-dsh-claude-part~="center-column"]) {
+  background: color-mix(in srgb, var(--dsw-alias-bg-base) calc(var(--dsh-claude-background-opacity) * 100%), transparent);
+}
+
+/* The frame's own fill carries an !important the importance ledger decided
+   (the host paints its own plate under it), so an opacity reaches it through
+   the token it reads, redefined for the frame's subtree from the untinted
+   alias. The columns' restated fills above read the same alias and meet it
+   at the same share. */
+html[data-windows-titlebar] body[data-dsh-claude-style][data-dsh-claude-palette="claude"]:not([data-we-wallpaper])[data-dsh-claude-background-opacity] [data-dsh-claude-part~="layout-frame"][data-dsh-claude-holds~="sidebar-column"] {
+  --dsh-claude-canvas: color-mix(in srgb, var(--dsw-alias-bg-base) calc(var(--dsh-claude-background-opacity) * 100%), transparent);
+}
+
+html[data-windows-titlebar] body[data-dsh-claude-style][data-dsh-claude-palette="claude"]:not([data-we-wallpaper])[data-dsh-claude-background-opacity] [data-dsh-claude-part~="layout-frame"] > [data-dsh-claude-part~="sidebar-column"] {
+  box-shadow: 0 calc(-1 * var(--dsh-windows-titlebar-height)) 0 0 color-mix(in srgb, var(--dsw-specific-sidebar-fill, var(--dsh-claude-sidebar-canvas)) calc(var(--dsh-claude-background-opacity) * 100%), transparent);
+}
+
+html[data-windows-titlebar] body[data-dsh-claude-style][data-dsh-claude-palette="claude"]:not([data-we-wallpaper])[data-dsh-claude-background-opacity] [data-dsh-claude-part~="layout-frame"] > [data-dsh-claude-part~="center-column"] {
+  box-shadow: 0 calc(-1 * var(--dsh-windows-titlebar-height)) 0 0 color-mix(in srgb, var(--dsw-alias-bg-base) calc(var(--dsh-claude-background-opacity) * 100%), transparent);
 }

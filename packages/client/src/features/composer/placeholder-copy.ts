@@ -53,14 +53,29 @@ const HINT_SOURCES = [
  * arrive in one order: a writer that only moves a shipped hint across would
  * leave the previous language standing.
  *
+ * A composition in flight over the field holds every write: the hint's nodes
+ * stand in the card the reader's editor composes in, and a write there makes
+ * the browser drop the letters typed but not committed. The settle after
+ * compositionend is what puts the hint right.
+ *
  * @param cards - the composer cards, kept current by the bus (D40).
  * @param placeholders - the placeholders those cards carry, from the same source.
+ * @param composing - whether the reader's field is part-way through a composition.
  */
-export function createPlaceholderCopy(cards: MatchList<HTMLElement>, placeholders: MatchList<HTMLElement>) {
+export function createPlaceholderCopy(cards: MatchList<HTMLElement>, placeholders: MatchList<HTMLElement>, composing: () => boolean) {
   /** How many passes this generation has run. */
   let pass = 0
   /** The shell's locale when the stand-in was last drawn. */
   let drawnLocale = ''
+  /** Whether a composition in flight held a pass back, so the settle after it has work to do. */
+  let held = false
+  /**
+   * The host's own hint text this generation replaced, with the skin's text it
+   * was replaced by. The teardown and a restyle that stands down put the host's
+   * words back; a node whose text no longer matches what was written is left
+   * alone, because the host has re-rendered it since.
+   */
+  const replaced = new Map<HTMLElement, { original: string, written: string }>()
 
   /** Whether a placeholder's text is one of the hints this skin replaces. */
   function isShippedHint(text: string) {
@@ -86,15 +101,66 @@ export function createPlaceholderCopy(cards: MatchList<HTMLElement>, placeholder
     return copyIn(ENTRIES, hero ? 'heroHint' : 'defaultHint', activeLocale())
   }
 
+  /**
+   * Whether a composition in flight keeps this pass from writing. The hint's
+   * nodes stand in the card the reader's editor composes in, and a write there
+   * under a composition makes the browser drop the letters typed but not
+   * committed (composer.composing).
+   */
+  function heldByComposition() {
+    if (!composing()) return false
+    held = true
+    return true
+  }
+
+  /** Put the hint in the words this page wants, now. */
+  function write(hero: boolean, active: boolean) {
+    held = false
+    const target = targetHint(hero)
+    rewriteHint(target, active)
+    syncStandIn(target, active)
+  }
+
+  /**
+   * Put the host's own hint back into every node this generation rewrote.
+   *
+   * The host's text goes back only where the skin's text still stands: a node
+   * the host has re-rendered since owns its new words. A hint the host no longer
+   * shows needs nothing — the node left with it.
+   */
+  function restoreHints() {
+    for (const [node, entry] of replaced) {
+      if (!node.isConnected) {
+        replaced.delete(node)
+        continue
+      }
+      if ((node.textContent || '') !== entry.written) {
+        replaced.delete(node)
+        continue
+      }
+      node.textContent = entry.original
+      replaced.delete(node)
+    }
+  }
+
   /** Write the skin's words into every shipped hint the page shows. */
   function rewriteHint(target: string, active: boolean) {
-    if (!active) return
+    if (!active) {
+      restoreHints()
+      return
+    }
+    for (const node of replaced.keys()) if (!node.isConnected) replaced.delete(node)
     const hints = placeholders.all()
     for (let i = 0; i < hints.length; i++) {
       const node = hints[i]
       if (node.hasAttribute(SYNTHETIC_ATTR)) continue
       const text = node.textContent || ''
-      if (isShippedHint(text) && text !== target) node.textContent = target
+      if (!isShippedHint(text) || text === target) continue
+      // The host's own words are kept per node, so turning the restyle off (or
+      // reloading the plugin) leaves the host's hint rather than the skin's.
+      const entry = replaced.get(node)
+      replaced.set(node, { original: entry?.original ?? text, written: target })
+      node.textContent = target
     }
   }
 
@@ -172,19 +238,31 @@ export function createPlaceholderCopy(cards: MatchList<HTMLElement>, placeholder
      * again, so this runs whether or not the restyle applies.
      */
     sync(hero: boolean, active: boolean) {
-      const target = targetHint(hero)
-      rewriteHint(target, active)
-      syncStandIn(target, active)
+      if (heldByComposition()) return
+      write(hero, active)
     },
     /** A composer input or composition event: only the stand-in can have changed. */
     onInput(hero: boolean, active: boolean) {
+      if (heldByComposition()) return
+      held = false
       syncStandIn(targetHint(hero), active)
+    },
+    /**
+     * A composition has landed: the pass it held back runs now. The host's flag
+     * may still stand when this is queued, and a new composition in flight
+     * leaves the hint to that one's end.
+     */
+    settle(hero: boolean, active: boolean) {
+      if (!held || heldByComposition()) return
+      write(hero, active)
     },
     /** The placeholders the skin added stand in for the host's own, so they leave with it. */
     dispose() {
       for (const node of placeholders.all()) {
         if (node.hasAttribute(SYNTHETIC_ATTR)) node.remove()
       }
+      restoreHints()
+      replaced.clear()
     },
   }
 }

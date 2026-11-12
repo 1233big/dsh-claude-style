@@ -8,20 +8,10 @@ import { buildElement } from '@dsh-claude-style/engine/dom'
 import { motionMs } from '../../shared/motion'
 import { inPagePixels } from '../../shared/page-zoom'
 import { SWEEP_BAND_CLASS, buildSweepBand } from '../../shared/sweep-band'
-import { ASSISTANT_STEP_KIND, CHAT_GROUP_PART_ATTRIBUTE, CHAT_GROUP_PART_REASONING, FLOW_KIND_ATTRIBUTE, PROCESS_ACTIVITY_SELECTOR, PROCESS_CONTENT_SELECTOR, PROCESS_GROUP_SELECTOR, SHIMMER_ATTRIBUTE, SHIMMER_LEGACY_ATTRIBUTE, SHIMMER_SELECTOR, TOOL_CALL_KIND } from '@dsh-claude-style/contracts/dom'
+import { ASSISTANT_STEP_KIND, CHAT_GROUP_PART_ATTRIBUTE, CHAT_GROUP_PART_REASONING, FLOW_KIND_ATTRIBUTE, PROCESS_ACTIVITY_SELECTOR, PROCESS_CONTENT_SELECTOR, PROCESS_GROUP_SELECTOR, SHIMMER_ATTRIBUTE, SHIMMER_SELECTOR, TOOL_CALL_KIND } from '@dsh-claude-style/contracts/dom'
 
-/**
- * A process group's header names what the group holds — 「执行 2 次思考，调用 1 次
- * 工具」 — in place of the host's list of activities (「执行了命令，已读取文件，
- * 已调用工具等」), each number rolling as the work grows. A header without the
- * room for the sentence falls back to the compact figures (`思考×2 · 工具×1`).
- *
- * The host keeps its header and its words: the summary is a span of the skin's
- * own at the end of the control, marked quiet so writing it wakes no pass, and
- * the stylesheet hides the host's words while it stands (fold.css). The header's
- * accessible name is the sentence, since the summary itself is hidden from the
- * accessibility tree and the host's words are hidden from view.
- */
+/* The visible summary is aria-hidden and quiet; the header carries the full sentence as its
+   accessible name. Narrow headers use compact figures. */
 
 /** The four figures, in the order the summary reads them. */
 export type ProcessFigure = 'thinking' | 'output' | 'tool' | 'record'
@@ -34,11 +24,7 @@ const FIGURES: readonly ProcessFigure[] = ['thinking', 'output', 'tool', 'record
 /** This figure's words, by the key they stand under in the feature's own copy. */
 type CopyText = CopyKey
 
-/**
- * Each figure's words. The sentence names the act and its count, and English
- * spells one and several differently — the host's own dictionaries carry the
- * same `.one` / `.other` pair (message.turnProcess.toolCalls).
- */
+/** English singular/plural keys mirror the host's message.turnProcess dictionaries. */
 const FIGURE_COPY: Record<ProcessFigure, { full: { one: CopyText, other: CopyText }, compact: CopyText }> = {
   thinking: {
     full: {
@@ -89,11 +75,7 @@ const FIT_CLASS = 'dsh-claude-process-summary-fit'
 /** On the band's copy of the figures, which lays them out the way the summary does (fold.css). */
 const GLYPHS_CLASS = 'dsh-claude-process-summary-glyphs'
 
-/**
- * What one group holds: its body's own rows, a thought or an output by the step
- * part they carry, a tool call, and anything else (a command, a record). A tool
- * row's inner calls are its own business and are not rows of the body.
- */
+/** Count direct body rows only; calls nested inside a tool row are not separate group items. */
 export function countProcessItems(content: Element): ProcessCounts {
   const counts: ProcessCounts = { thinking: 0, output: 0, tool: 0, record: 0 }
   for (const row of content.children) {
@@ -167,12 +149,7 @@ interface SummaryReading {
   name: string
 }
 
-/**
- * Watch every process group on the page and keep its header's summary in step
- * with what the group holds, in the wording the header has room for.
- *
- * @returns teardown: the summaries, the marks and the names go, and the host's words come back.
- */
+
 export function createProcessSummary() {
   /** Each summarised header: the name written there, and the summary element it carries. */
   const named = new Map<HTMLElement, { name: string, summary: HTMLElement }>()
@@ -189,13 +166,14 @@ export function createProcessSummary() {
   /** Cancels the frame the pending groups wait on. */
   let cancelFrame: (() => void) | null = null
 
-  /**
-   * What the hidden span measured for a wording, under the face it was
-   * measured in. The span is out of flow and nowrap, so its width answers the
-   * words alone: the same sentence measures the same width in every header,
-   * and asking again would write the span's text and lay it out again (D9).
-   */
+  /** Cache natural widths by wording and font face to avoid repeated layout (D9). */
   const fitWidths = new Map<string, number>()
+  /** Bound cached count-specific wordings; clearing only forces fresh measurements. */
+  const FIT_WIDTH_LIMIT = 512
+  /** Cache font signatures until fonts load or zoom changes to avoid recalculation per group. */
+  const faceSignatures = new WeakMap<HTMLElement, { epoch: number, signature: string }>()
+  /** Moves when a face arrives, so every kept signature is read again. */
+  let faceEpoch = 0
   /** What each running summary's band copy says, so a pass that changes nothing writes nothing. */
   const bandSentences = new WeakMap<HTMLElement, string>()
 
@@ -238,13 +216,7 @@ export function createProcessSummary() {
     return summary.firstElementChild as HTMLElement
   }
 
-  /**
-   * What the header may spend on its summary: the room its containing block
-   * gives it, less its own edges, every other child and the gaps between them.
-   * The header's own box cannot answer this — the host's control is sized to
-   * its content, so its current width follows the wording it is already
-   * showing and the check would agree with itself.
-   */
+  /** Measure against the containing block: the content-sized header would otherwise validate its current wording. */
   function availableWidth(header: HTMLElement, summary: HTMLElement) {
     const style = getComputedStyle(header)
     const parent = header.parentElement
@@ -266,34 +238,34 @@ export function createProcessSummary() {
     return Math.max(0, room)
   }
 
-  /** The key one sentence's measured width is kept under, for the face it is set in. */
-  function fitKey(fit: HTMLElement, sentence: string) {
+  /** Font signature completes the width cache key and is cached per faceEpoch. */
+  function faceSignature(fit: HTMLElement): string {
+    const kept = faceSignatures.get(fit)
+    if (kept !== undefined && kept.epoch === faceEpoch) return kept.signature
     const style = getComputedStyle(fit)
-    return `${sentence}\u0000${style.fontSize}\u0000${style.fontFamily}\u0000${style.fontWeight}\u0000${style.letterSpacing}`
+    const signature = `${style.fontSize}\u0000${style.fontFamily}\u0000${style.fontWeight}\u0000${style.letterSpacing}`
+    faceSignatures.set(fit, { epoch: faceEpoch, signature })
+    return signature
   }
 
-  /**
-   * The hidden span's width for this sentence.
-   *
-   * The span is the only thing that can answer it, and writing it costs a
-   * layout of its own: what it says for a wording under one face is kept, so a
-   * repeated sentence — the same counts across turns — reads nothing at all.
-   */
+  /** The key one sentence's measured width is kept under, for the face it is set in. */
+  function fitKey(fit: HTMLElement, sentence: string) {
+    return `${sentence}\u0000${faceSignature(fit)}`
+  }
+
+  /** Reuse measurements for repeated sentences under the same font face. */
   function fitWidthOf(fit: HTMLElement, sentence: string): number {
     const key = fitKey(fit, sentence)
     const known = fitWidths.get(key)
     if (known !== undefined) return known
     if (fit.textContent !== sentence) fit.textContent = sentence
     const width = inPagePixels(fit.getBoundingClientRect().width)
+    if (fitWidths.size >= FIT_WIDTH_LIMIT) fitWidths.clear()
     fitWidths.set(key, width)
     return width
   }
 
-  /**
-   * The wording this header has room for. The hidden span holds the sentence,
-   * which is what the header shows while there is room for it; a header inside
-   * a folded turn measures nothing and keeps the sentence until it is opened.
-   */
+  /** A header hidden in a folded turn keeps the full sentence until it can be measured. */
   function formOf(header: HTMLElement, summary: HTMLElement, sentence: string): SummaryForm {
     return summaryForm(fitWidthOf(fitOf(summary), sentence), availableWidth(header, summary))
   }
@@ -308,14 +280,7 @@ export function createProcessSummary() {
     return { full, compact: summaryParts(counts, 'compact'), name: summaryText(full, 'full') }
   }
 
-  /**
-   * The band over a running summary (shared/sweep-band.ts), the host's own
-   * sweep over the words it replaced. Its copy holds the figures as they stand
-   * and is written again only when what they say changes, so a summary drawn
-   * again on every pass of a run keeps one band and its pass. A digit rolling
-   * in the summary stands settled in the copy: the roll is over in a tenth of
-   * one pass of the band.
-   */
+  /** Rewrite the sweep copy only when its sentence changes; cloned digits use their settled state. */
   function syncBand(summary: HTMLElement, running: boolean, sentence: string) {
     const standing = summary.querySelector<HTMLElement>(`:scope > .${SWEEP_BAND_CLASS}`)
     if (!running) {
@@ -383,11 +348,7 @@ export function createProcessSummary() {
     header.closest(PROCESS_GROUP_SELECTOR)?.removeAttribute(PROCESS_SUMMARY_ATTR)
   }
 
-  /**
-   * Watch the summaries the pass left standing through one size subscription:
-   * one subscription per group would grow with the page, and the bus hands a
-   * subscription its own elements' entries either way (D40).
-   */
+  /** Share one size subscription across summaries (D40). */
   function watchSummaries(summaries: HTMLElement[]) {
     if (sameSummaries(summaries)) return
     if (stopSummarySizes !== null) stopSummarySizes()
@@ -409,11 +370,7 @@ export function createProcessSummary() {
     return true
   }
 
-  /**
-   * Write what each group asks for: the wording that fits, and the name — which
-   * is the sentence either way, since the drawn wording answers the room this
-   * header has and the name says what the group holds.
-   */
+  /** Keep the accessible name as the full sentence even when the visible wording is compact. */
   function flush(groups: readonly Element[], forms: Map<HTMLElement, SummaryForm>) {
     for (const group of groups) {
       if (!group.isConnected) continue
@@ -457,10 +414,7 @@ export function createProcessSummary() {
     const deferred = new Map<Element, string>()
     cancelFrame = requestFrame({
       read() {
-        // Measurement only: a summary this batch has to build, or a sentence the
-        // measuring span does not hold yet, is written in the write phase and
-        // measured next frame. Writing it here costs one layout per group, and a
-        // session switch brings every group at once.
+        // Build missing measuring content in the write phase and measure it next frame (D40).
         for (const candidate of pending) {
           if (!candidate.isConnected) continue
           const header = candidate.querySelector<HTMLElement>(PROCESS_ACTIVITY_SELECTOR)
@@ -500,10 +454,12 @@ export function createProcessSummary() {
   const stopMutations = subscribeMutations(document.body, {
     subtree: true,
     childList: true,
-    attributeFilter: [SHIMMER_ATTRIBUTE, SHIMMER_LEGACY_ATTRIBUTE],
+    attributeFilter: [SHIMMER_ATTRIBUTE],
     skipQuiet: true,
   }, records => {
+    let removed = false
     for (const record of records) {
+      if (record.removedNodes.length > 0) removed = true
       const target = record.target instanceof Element ? record.target : record.target.parentElement
       const group = target?.closest(PROCESS_GROUP_SELECTOR) ?? null
       if (group !== null) queue(group)
@@ -513,12 +469,20 @@ export function createProcessSummary() {
         for (const found of node.querySelectorAll(PROCESS_GROUP_SELECTOR)) queue(found)
       }
     }
+    // A header the host unmounted takes its summary and its size subscription
+    // with it now: the next transcript may hold no group at all, and the flush
+    // that would have swept it never comes.
+    if (removed) {
+      for (const header of [...named.keys()]) if (!header.isConnected) release(header)
+      watchSummaries([...named.values()].map(entry => entry.summary))
+    }
   })
   for (const group of document.querySelectorAll(PROCESS_GROUP_SELECTOR)) queue(group)
 
   // A face arriving changes what a wording measures: nothing measured under the
   // faces of the first frame stands past them.
   const onFacesLoaded = () => {
+    faceEpoch += 1
     fitWidths.clear()
   }
   document.fonts.addEventListener('loadingdone', onFacesLoaded)

@@ -67,11 +67,15 @@
         host: await readHost({ palette: 'host', typeface: 'host' }, false),
         wallpaper: await readHost(null, true),
         claude: await readHost({ palette: 'claude', typeface: 'claude' }, false),
+        system: await readHost({ typeface: 'system' }, false),
         // The wallpaper plugin showing one under the Claude palette: the
         // shell stands down, one mask lies over the wallpaper, and the base
         // canvas and the skin's own faces keep their fill.
         claudeWallpaper: await readHost(null, true),
+        halfWallpaper: await readHost({ backgroundOpacity: '50' }, true),
+        deepseekWallpaper: await readHost({ paletteColors: 'deepseek' }, true),
       }
+      await readHost({ backgroundOpacity: '100' }, false)
       document.body.removeAttribute('data-we-wallpaper')
       await sleep(120)
       for (var hostKey in hostNodes) hostNodes[hostKey].remove()
@@ -126,16 +130,18 @@
         })
         return out
       }
-      // The Motion tab's tree, for the two kinds of preview card read off it.
-      var renderMotion = function () {
+      // A settings tab's tree, for the preview cards read off it.
+      var renderSettingsTab = function (tab) {
         var react = window.__react
         react.rendering = true
-        react.states = { general: 'motion' }
+        react.states = { general: tab }
         var tree = Section({})
         react.rendering = false
         react.states = null
         return tree
       }
+      probe.settingsTree = renderSettingsTab
+      probe.walkSettingsTree = walk
       r.settings = { registered: typeof Section === 'function', pages: {} }
       if (r.settings.registered) {
         var tabIds = ['general', 'appearance', 'main-window', 'sidebar', 'motion']
@@ -161,7 +167,7 @@
         // two wordings' animation names, delays and places are the taking-turns.
         r.settings.paintCards = (function () {
           var out = { cards: [], previews: {} }
-          var tree = renderMotion()
+          var tree = renderSettingsTab('motion')
           walk(tree, function (node) {
             var props = node.props || {}
             if (typeof props.className === 'string' && /(^| )dsh-claude-motion-card( |$)/.test(props.className)) {
@@ -347,67 +353,6 @@
         }
         r.settings.revealPreview = { fade: readPiece(fadePiece), waiting: readPiece(waitingPiece), plain: readPiece(plainPiece) }
         revealHost.remove()
-        // The ongoing-mark row's cards: one sidebar row per card, led by the
-        // mark its choice gives it, and the reader's stored choice repainting
-        // the running row's own mark on the page. The mark's paint is the
-        // sidebar's (theme/sidebar.css), so the cards are read through their own
-        // boxes and the session row's box is read under each stored value.
-        r.settings.ongoingCards = (function () {
-          var out = { cards: [] }
-          var tree = renderMotion()
-          walk(tree, function (node) {
-            var props = node.props || {}
-            if (typeof props.className !== 'string' || !/(^| )dsh-claude-ongoing-card( |$)/.test(props.className)) return
-            var sample = [].concat(props.children || [])[0] || {}
-            var sampleProps = sample.props || {}
-            var parts = [].concat(sampleProps.children || [])
-            var mark = parts[0] || {}
-            var title = parts[1] || {}
-            out.cards.push({
-              label: props['aria-label'],
-              active: props['data-active'] === '',
-              pressed: props['aria-pressed'],
-              sample: sampleProps['aria-hidden'] === 'true' && /(^| )dsh-claude-ongoing-sample( |$)/.test(sampleProps.className || ''),
-              look: (mark.props || {})['data-look'],
-              title: [].concat((title.props || {}).children || []).join(''),
-            })
-          })
-          return out
-        })()
-        var marksHost = document.createElement('div')
-        marksHost.style.cssText = 'position:absolute;left:-10000px;top:-10000px'
-        var markOf = function (look) {
-          var mark = document.createElement('span')
-          mark.className = 'dsh-claude-ongoing-mark'
-          mark.setAttribute('data-look', look)
-          marksHost.appendChild(mark)
-          return mark
-        }
-        var breatheMark = markOf('breathe')
-        var ringMark = markOf('ring')
-        document.body.appendChild(marksHost)
-        var readMark = function (mark) {
-          var style = getComputedStyle(mark)
-          return { width: style.width, border: style.borderTopWidth, animation: style.animationName, duration: style.animationDuration }
-        }
-        r.settings.ongoingMarks = { breathe: readMark(breatheMark), ring: readMark(ringMark) }
-        marksHost.remove()
-        var runningMark = document.querySelector('[data-dsh-claude-part~="session-row"] svg[data-state="ongoing"]')
-        var readRunning = function () {
-          var style = getComputedStyle(runningMark)
-          return {
-            attribute: document.body.getAttribute('data-dsh-claude-ongoing-indicator'),
-            width: style.width,
-            border: style.borderTopWidth,
-            animation: style.animationName,
-          }
-        }
-        window.__pushForm({ ongoingIndicator: 'ring' })
-        await sleep(120)
-        var ringRunning = readRunning()
-        window.__pushForm({ ongoingIndicator: 'breathe' })
-        await sleep(120)
-        r.settings.ongoingStored = { ring: ringRunning, breathe: readRunning() }
         // The colour cards: all three are buttons, the card the page paints is
         // pressed, and a picked card hands the colours back through its reset.
         // The brand mark is read beside the card, because a picked card paints
@@ -489,9 +434,9 @@
           await sleep(120)
           return { following: following, pinned: pinned, custom: custom }
         })()
-        window.__pushForm({ modelPicker: false, mascot: 'off', sidebarSearch: false, palette: 'host' })
+        window.__pushForm({ modelPicker: false, mascot: 'off', sidebarSearch: false, palette: 'host', billingCurrency: 'off' })
         r.settings.parentsOff = { appearance: renderTab('appearance'), mainWindow: renderTab('main-window'), sidebar: renderTab('sidebar') }
-        window.__pushForm({ modelPicker: true, mascot: 'brand', sidebarSearch: true, palette: 'claude' })
+        window.__pushForm({ modelPicker: true, mascot: 'brand', sidebarSearch: true, palette: 'claude', billingCurrency: 'CNY' })
         // The rows that wait for another setting: the composer restyle off greys
         // the picker, its sub-rows, the permission control and the statistics'
         // figures; the footer takeover off greys the easter egg under it. Home
@@ -520,6 +465,42 @@
         window.__pushForm({ pageZoom: 'system' })
         await sleep(120)
         r.settings.pageZoom = { zoomed: zoomed, shrunk: shrunk, following: readZoom() }
+        // The row's own control: one field that takes any percentage, the reset
+        // label beside it and the seekbar the field opens, both covering the same
+        // range. Read off the element tree — not the report `renderTab` walks into
+        // — with a percentage the default does not carry, so the reset label is the
+        // state under test; the same walk at the default reports no label at all.
+        var readZoomRow = function () {
+          var react = window.__react
+          react.rendering = true
+          react.states = null
+          var tree = Section({})
+          react.rendering = false
+          var out = {}
+          var zoomRow = null
+          walk(tree, function (node) {
+            var props = node.props || {}
+            if (props.key === 'pageZoom') zoomRow = props
+          })
+          if (zoomRow !== null) {
+            walk(zoomRow.children, function (node) {
+              var props = node.props || {}
+              if (props.inputMode === 'numeric') out.box = { type: props.type, value: props.value, placeholder: props.placeholder, label: props['aria-label'] }
+              if (props.type === 'range') out.track = { type: props.type, min: props.min, max: props.max, step: props.step, value: props.value, label: props['aria-label'] }
+              if (props.type === 'button') out.reset = { text: [].concat(props.children).join('') }
+              if (props['data-open'] !== undefined) out.card = { open: props['data-open'] }
+            })
+          }
+          return out
+        }
+        window.__pushForm({ pageZoom: '112' })
+        await sleep(120)
+        r.settings.pageZoomControl = readZoomRow()
+        window.__pushForm({ pageZoom: '100' })
+        await sleep(120)
+        r.settings.pageZoomAtDefault = readZoomRow()
+        window.__pushForm({ pageZoom: 'system' })
+        await sleep(120)
         // On the Windows window the title-bar row takes input; everywhere else
         // it stays greyed with its note.
         document.documentElement.setAttribute('data-windows-titlebar', '')

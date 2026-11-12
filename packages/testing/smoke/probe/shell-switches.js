@@ -28,9 +28,9 @@
       switchHeader.className = '_header_c_1'
       // The host's own header anchor: the strip's parts are read inside it (D3).
       switchHeader.setAttribute('data-slot', 'conversation.header')
-      switchHeader.innerHTML = '<div class="_tabs_c_1" role="tablist" data-conversation-tabs="">' +
+      switchHeader.innerHTML = '<div class="_tabs_c_1"><div class="_viewTabs_c_1" role="tablist" data-conversation-tabs="">' +
         '<button type="button" role="tab" aria-selected="true" class="_tab_c_1 _tabActive_c_1">Chat</button>' +
-        '<button type="button" role="tab" aria-selected="false" class="_tab_c_1">Trajectory</button></div>'
+        '<button type="button" role="tab" aria-selected="false" class="_tab_c_1">Trajectory</button></div></div>'
       document.body.appendChild(switchHeader)
       var switchMarks = function () {
         return {
@@ -40,7 +40,9 @@
           permissionsControl: document.querySelectorAll('.dsh-claude-perm-container').length +
             (document.body.hasAttribute('data-dsh-claude-permissions') ? 1 : 0),
           workspaceView: document.querySelectorAll('.dsh-claude-ws-segments').length,
-          sidebarSearch: document.querySelectorAll('[data-dsh-claude-search-row], .dsh-claude-search-trigger').length,
+          sidebarSearch: (window.__slots || []).filter(function (entry) {
+            return entry.id === 'dsh-claude-style.search' || entry.seat === 'dsh-claude-style.search'
+          }).length,
           viewTabs: document.querySelectorAll('[data-dsh-view-tabs]').length,
           // The composer restyle's gate: the feature writes it on <body> and
           // takes it off again when its scope choice is off.
@@ -76,7 +78,17 @@
         return patch
       }
       await sleep(300)
-      r.switches = { start: switchMarks(), steps: [] }
+      /** The host's own grouping, straight off the stand-in's store. */
+      var groupOfHost = function () {
+        var store = window.__dshSmokeHost.workspaceViewStore
+        return store === undefined ? null : store.getSnapshot().groupBy
+      }
+      r.switches = {
+        start: switchMarks(),
+        steps: [],
+        // 日期视图默认关着：装上时宿主的分组是读者自己的那一档（按工作区）。
+        dateView: { start: groupOfHost() },
+      }
       await probe.onlyFor(['switches'], async function () {
         for (var si = 0; si < switchKeys.length; si++) {
           var offPatch = {}
@@ -87,16 +99,90 @@
           var on = await settleSwitch(onPatch)
           r.switches.steps.push({ key: switchKeys[si], off: off, on: on })
         }
+        // The segment control drives the host's own view store rather than a
+        // list of the skin's: 已归档 asks for the archived-only filter and one
+        // flat list, and 进行中 puts the filter back with the grouping that
+        // stood before the visit. The store is the registration the stand-in
+        // keeps under `sidebar.workspaces` (stand-in/slots.js), so the snapshot
+        // read here is the host's answer, not the skin's mark.
+        var readView = function (item) {
+          var store = window.__dshSmokeHost.workspaceViewStore
+          var snapshot = store === undefined ? null : store.getSnapshot()
+          return {
+            // A copy: the store's snapshot is its live state, which the next
+            // click would otherwise rewrite under both readings.
+            snapshot: snapshot === null ? null : { archivedFilter: snapshot.archivedFilter, groupBy: snapshot.groupBy },
+            checked: item === null ? null : item.getAttribute('aria-checked'),
+          }
+        }
+        var clickSegment = async function (view) {
+          var item = document.querySelector('.dsh-claude-ws-segment[data-view="' + view + '"]')
+          if (item !== null) item.click()
+          document.body.appendChild(document.createElement('i'))
+          await sleep(300)
+          return readView(item)
+        }
+        // 日期视图不再随安装打开：按下标题行的铃铛让它站着，再验证回到进行中时
+        // 还的是这一档（扁平），而不是把读者自己的分组换掉。
+        var bell = document.querySelector('.dsh-claude-active-shelf-trigger')
+        if (bell !== null) bell.click()
+        document.body.appendChild(document.createElement('i'))
+        await sleep(300)
+        r.switches.dateView.on = groupOfHost()
+        r.switches.view = {
+          archived: await clickSegment('archived'),
+          active: await clickSegment('active'),
+        }
+        if (bell !== null) bell.click()
+        document.body.appendChild(document.createElement('i'))
+        await sleep(300)
+        r.switches.dateView.off = groupOfHost()
+        // 宿主自己的视图菜单也提供「单列表」（扁平）：读者在那里选的一档是他的分组，
+        // 不是日期视图留下的痕迹，跟着走一遍已归档再回来也还是它。
+        var hostStore = window.__dshSmokeHost.workspaceViewStore
+        hostStore.actions.setGroupBy('flat')
+        document.body.appendChild(document.createElement('i'))
+        await sleep(300)
+        r.switches.flat = {
+          picked: readView(null),
+          archived: await clickSegment('archived'),
+          active: await clickSegment('active'),
+        }
+        hostStore.actions.setGroupBy('workspace')
+        document.body.appendChild(document.createElement('i'))
+        await sleep(200)
         r.switches.allOff = await settleSwitch(allSwitches(false))
       })
       r.switches.allOn = await settleSwitch(allSwitches(true))
+      await probe.onlyFor(['switches'], async function () {
+        // A browser left on 已归档 hands the next load a store already on
+        // `only` + `flat`; the switch's teardown and install is the same pair a
+        // reload runs, so the feature has to come back on that segment instead
+        // of driving the store back to 进行中.
+        var store = window.__dshSmokeHost.workspaceViewStore
+        store.actions.setArchivedFilter('only')
+        store.actions.setGroupBy('flat')
+        await settleSwitch({ workspaceView: false })
+        await settleSwitch({ workspaceView: true })
+        var segment = document.querySelector('.dsh-claude-ws-segment[data-view="archived"]')
+        var snapshot = store.getSnapshot()
+        r.switches.reinstall = {
+          snapshot: { archivedFilter: snapshot.archivedFilter, groupBy: snapshot.groupBy },
+          checked: segment === null ? null : segment.getAttribute('aria-checked'),
+        }
+        // Hand the rail scenario a 进行中 section again.
+        var active = document.querySelector('.dsh-claude-ws-segment[data-view="active"]')
+        if (active !== null) active.click()
+        await sleep(300)
+      })
       // The collapsed rail: the host renders the section's heading only while
-      // the sidebar is wide, so the feature's control and archived list have to
-      // leave with the heading and come back with it.
+      // the sidebar is wide, so the feature's control has to leave with the
+      // heading and come back with it. The list below is the host's own tree,
+      // so its rows stay where the host drew them.
       var railMarks = function () {
         return {
           segments: document.querySelectorAll('.dsh-claude-ws-segments').length,
-          list: document.querySelectorAll('.dsh-claude-archive-list').length,
+          rows: document.querySelectorAll('[data-row-key]').length,
         }
       }
       var sectionHeader = switchSidebar.querySelector('._sectionHeader_w1_1')

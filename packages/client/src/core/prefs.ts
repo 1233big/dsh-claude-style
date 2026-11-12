@@ -1,4 +1,7 @@
-import { BRAND_ATTR, BRAND_DEEPSEEK, COMPOSER_ATTR, COMPOSER_GAP_ATTR, COMPOSER_GAP_THEME, CONTEXT_DISPLAY_ATTR, CONTEXT_NUMBERS_ATTR, DOCK_LOOK_ATTR, DOCK_LOOK_CARD, DOCK_LOOK_FLUSH, EFFORT_ACCENT_ATTR, FOOTER_ATTR, MASCOT_ATTR, MASCOT_BRAND, MASCOT_CRAB, MASCOT_DEEPY, MOTION_ATTR, MOTION_FULL, MOTION_REDUCED, ONGOING_INDICATOR_ATTR, PAGE_ZOOM_ATTR, PAGE_ZOOM_SYSTEM, PACKAGE_NAME, PALETTE_ATTR, PALETTE_CARD_ATTR, PALETTE_COLORING_BRAND, PALETTE_COLORING_CUSTOM, PREF_DEFAULTS, SEARCH_STYLE_ATTR, SETTINGS_ENTRY_FALLBACK, SIDEBAR_LAYOUT_ATTR, STATS_POSITION_ATTR, STATUS_MOTION_ATTR, TYPEFACE_ATTR } from '../constants'
+import { BACKGROUND_OPACITY_ATTR, BACKGROUND_OPACITY_MAX, BACKGROUND_OPACITY_VAR, BRAND_ATTR, BRAND_DEEPSEEK, COMPOSER_ATTR, COMPOSER_GAP_ATTR, COMPOSER_GAP_THEME, CONTEXT_DISPLAY_ATTR, CONTEXT_NUMBERS_ATTR, EFFORT_ACCENT_ATTR, FOOTER_ATTR, INTERFACE_FONT_SIZE_ATTR, INTERFACE_FONT_SIZE_VAR, MASCOT_ATTR, MASCOT_BRAND, MASCOT_CRAB, MASCOT_DEEPY, MOTION_ATTR, MOTION_FULL, MOTION_REDUCED, ONGOING_INDICATOR_ATTR, ONGOING_SIDE_ATTR, PAGE_ZOOM_ATTR, PAGE_ZOOM_VAR, PACKAGE_NAME, PALETTE_ATTR, PALETTE_CARD_ATTR, PALETTE_COLORING_BRAND, PALETTE_COLORING_CUSTOM, PREF_DEFAULTS, SEARCH_STYLE_ATTR, SETTINGS_ENTRY_FALLBACK, SIDEBAR_BRAND_ATTR, SIDEBAR_LAYOUT_ATTR, STATS_POSITION_ATTR, STATUS_MOTION_ATTR, TYPEFACE_ATTR } from '../constants'
+import { backgroundOpacityOf, projectBackgroundOpacity } from '../shared/background-opacity'
+import { interfaceFontSizeOf, projectInterfaceFontSize } from '../shared/interface-font-size'
+import { pageZoomOf, pageZoomText, projectPageZoomFactor } from '../shared/page-zoom'
 import type { PrefKey, Prefs } from '../constants'
 import type { HostContext } from '@dsh-claude-style/engine/host'
 import { clampPrefs, PREFS } from '@dsh-claude-style/contracts/prefs'
@@ -6,13 +9,7 @@ import { notifyAll } from '@dsh-claude-style/engine/notify'
 import { createSettingsBinding } from '@dsh-claude-style/engine/settings-binding'
 import { pageOwner } from '../shared/visual-owner'
 
-/**
- * Skin preferences: the host settings namespace is the store, and every
- * value is mirrored onto the document as an attribute so the stylesheet
- * decides what it means (D75). Until the first read settles — and if
- * it fails — the table's defaults hold. The clamp that turns a stored value
- * into one of these is the table's own (packages/contracts/src/prefs.ts, D73).
- */
+/** Defaults hold until the host form answers; the shared table clamps stored values (D73, D75). */
 export let prefs = clampPrefs({})
 const prefsListeners: ((prefs: Prefs) => void)[] = []
 /** Whether the preferences on hand came from the form: until then they are the table's defaults. */
@@ -42,12 +39,7 @@ export function loadPrefs() {
   binding.read()
 }
 
-/**
- * Runtime overrides that outrank the stored preferences: a feature retired
- * after failing hands its surface back to the host, because both of these
- * HIDE host controls and a takeover whose replacement is gone would leave
- * nothing in their place.
- */
+/** Retired takeovers must reveal the host controls they hid. */
 let footerTakeoverRetired = false
 export let composerRestyleRetired = false
 
@@ -86,15 +78,7 @@ export function subscribePrefs(listener: (prefs: Prefs) => void) {
   }
 }
 
-/**
- * The document mirror: one entry per preference the stylesheet switches on,
- * with the attribute it rides and the resolver that turns the preference into
- * what the rules test (the resolved mascot, the dock's look, the footer's
- * presence). One list is the whole contract with the stylesheets: `adoptPrefs`
- * writes these and `clearPrefsAttributes` takes the same names back (entry.ts).
- * Its entries are literals so the build can hold every attribute a stylesheet
- * reads to a name written here (D9).
- */
+/** Literal mirrors let the build match stylesheet attributes to writes; cleanup uses the same list (D9). */
 interface PrefMirror {
   key: PrefKey
   attr: string
@@ -104,6 +88,9 @@ interface PrefMirror {
 
 const MIRRORS = [
   { key: 'brand', attr: BRAND_ATTR, value: (prefs: Prefs) => prefs.brand },
+  // The brand area's presence is a stylesheet decision: the row it stands in
+  // keeps drawing the sidebar toggle, so the sheet hides the brand alone.
+  { key: 'sidebarBrand', attr: SIDEBAR_BRAND_ATTR, value: (prefs: Prefs) => prefs.sidebarBrand ? false : 'off' },
   { key: 'palette', attr: PALETTE_ATTR, value: (prefs: Prefs) => prefs.palette },
   // Following the brand and the reader's four paint on top of the brand's card;
   // a picked card is the token layer of its own, whichever mark stands above it.
@@ -116,32 +103,55 @@ const MIRRORS = [
   },
   { key: 'typeface', attr: TYPEFACE_ATTR, value: (prefs: Prefs) => prefs.typeface },
   { key: 'mascot', attr: MASCOT_ATTR, value: resolveMascot },
-  { key: 'dockCards', attr: DOCK_LOOK_ATTR, value: (prefs: Prefs) => prefs.dockCards ? DOCK_LOOK_CARD : DOCK_LOOK_FLUSH },
   { key: 'searchStyle', attr: SEARCH_STYLE_ATTR, value: (prefs: Prefs) => prefs.searchStyle },
   { key: 'sidebarLayout', attr: SIDEBAR_LAYOUT_ATTR, value: (prefs: Prefs) => prefs.sidebarLayout },
   { key: 'ongoingIndicator', attr: ONGOING_INDICATOR_ATTR, value: (prefs: Prefs) => prefs.ongoingIndicator },
+  { key: 'ongoingIndicatorSide', attr: ONGOING_SIDE_ATTR, value: (prefs: Prefs) => prefs.ongoingIndicatorSide },
   { key: 'statsPosition', attr: STATS_POSITION_ATTR, value: (prefs: Prefs) => prefs.statsPosition },
   { key: 'contextDisplay', attr: CONTEXT_DISPLAY_ATTR, value: (prefs: Prefs) => prefs.contextDisplay },
   { key: 'contextNumbers', attr: CONTEXT_NUMBERS_ATTR, value: (prefs: Prefs) => prefs.contextNumbers ? 'on' : 'off' },
   { key: 'composerBottomGap', attr: COMPOSER_GAP_ATTR, value: (prefs: Prefs) => prefs.composerBottomGap === COMPOSER_GAP_THEME ? false : prefs.composerBottomGap },
   { key: 'effortAccent', attr: EFFORT_ACCENT_ATTR, value: (prefs: Prefs) => prefs.effortAccent },
   { key: 'statusMotion', attr: STATUS_MOTION_ATTR, value: (prefs: Prefs) => prefs.statusMotion },
-  // Following the system writes no attribute at all: every zoom rule hangs off
-  // a factor, so the page keeps the size the system and the host give it.
-  { key: 'pageZoom', attr: PAGE_ZOOM_ATTR, value: (prefs: Prefs) => prefs.pageZoom === PAGE_ZOOM_SYSTEM ? false : prefs.pageZoom },
+  // The page's scale is this attribute alone; the sheet's `zoom` reads it
+  // through the property `projectPageZoomFactor` projects from it, written
+  // right after the mirrors below. At 100% the attribute is taken off, and the
+  // page keeps the size the system and the host give it.
+  {
+    key: 'pageZoom',
+    attr: PAGE_ZOOM_ATTR,
+    value: (prefs: Prefs) => {
+      const factor = pageZoomOf(prefs.pageZoom)
+      return factor === 1 ? false : pageZoomText(factor)
+    },
+  },
+  {
+    key: 'interfaceFontSize',
+    attr: INTERFACE_FONT_SIZE_ATTR,
+    value: (prefs: Prefs) => {
+      const percent = interfaceFontSizeOf(prefs.interfaceFontSize) * 100
+      return percent === 100 ? false : String(percent)
+    },
+  },
+  // The background's opacity is this attribute alone; the canvas fills read it
+  // through the property `projectBackgroundOpacity` projects from it, written
+  // right after the mirrors below. At 100 the attribute is taken off, and the
+  // fills keep the opaque canvas they have always painted.
+  {
+    key: 'backgroundOpacity',
+    attr: BACKGROUND_OPACITY_ATTR,
+    value: (prefs: Prefs) => {
+      const percent = Math.round(backgroundOpacityOf(prefs.backgroundOpacity) * 100)
+      return percent === BACKGROUND_OPACITY_MAX ? false : String(percent)
+    },
+  },
   { key: 'collapseFooter', attr: FOOTER_ATTR, value: (prefs: Prefs) => prefs.collapseFooter && !footerTakeoverRetired },
 ] as const satisfies readonly PrefMirror[]
 
 /** Every attribute the mirror writes, plus the animation answer `writeMotionAttribute` resolves. */
 const MIRROR_ATTRS: readonly string[] = [...MIRRORS.map(mirror => mirror.attr), MOTION_ATTR]
 
-/**
- * Adopt a preference set: mirror it onto the document, then notify. A page a
- * skin or ds-bot owns carries none of this theme's attributes (D74): the set is
- * kept, and taking the page back mirrors it (entry.ts). The form answers
- * whenever it answers, and the settings section installs whenever its chunk
- * arrives (D72), so a yielded page hears adoptions too.
- */
+/** Update state even while yielded, but write attributes only on our page; notify after mirroring (D74). */
 export function adoptPrefs(next: Prefs) {
   prefs = next
   if (pageOwner() === null) {
@@ -150,6 +160,13 @@ export function adoptPrefs(next: Prefs) {
       if (value === false) document.body.removeAttribute(mirror.attr)
       else document.body.setAttribute(mirror.attr, String(value))
     }
+    // After the attribute, which is what it reads: the sheet's half of the page's
+    // scale, written here rather than a frame later by the scale watcher.
+    projectPageZoomFactor()
+    projectInterfaceFontSize()
+    // The canvas fills' opacity rides the same channel: the property is written
+    // from the attribute here, like the scale above.
+    projectBackgroundOpacity()
     writeMotionAttribute(next.motion)
   }
   notifyAll(prefsListeners, next)
@@ -158,6 +175,9 @@ export function adoptPrefs(next: Prefs) {
 /** Take back every attribute adoptPrefs mirrors onto the document: the page goes back to the host (entry.ts). */
 export function clearPrefsAttributes() {
   for (const name of MIRROR_ATTRS) document.body.removeAttribute(name)
+  document.body.style.removeProperty(PAGE_ZOOM_VAR)
+  document.body.style.removeProperty(INTERFACE_FONT_SIZE_VAR)
+  document.body.style.removeProperty(BACKGROUND_OPACITY_VAR)
 }
 
 /** Whether the operating system asks for reduced motion right now. */

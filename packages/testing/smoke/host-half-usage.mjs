@@ -4,6 +4,8 @@
  */
 import fs from 'fs'
 import path from 'path'
+import { runsPath } from '../../../scripts/shared/debug-paths.mjs'
+import { pathToFileURL } from 'url'
 import { ROOT, same, check } from './shared.mjs'
 
 /**
@@ -20,10 +22,11 @@ async function hostUsage({ mod, fakeHost, request, browser, scratchHome, scratch
   // A ledger that stopped writing yesterday, and one stored log that settled on
   // one of its days and on today: the ledger's per-day `byProviderModel` becomes
   // the day's per-model map, one model served by two providers is one cell, and a
-  // key without a provider prefix is the model itself. A day the ledger knows
-  // stays the ledger's (the log's settlement on it is not added); today, past the
-  // ledger's newest day, is the fold's whole day, with its model split, its
-  // session and its hours.
+  // key without a provider prefix is the model itself. A day the ledger recorded
+  // more of keeps the ledger's tokens (the log's settlement on it is not added)
+  // and takes the fold's hour histogram, the column the ledger has none of;
+  // today, past the ledger's newest day, is the fold's whole day, with its model
+  // split, its session and its hours.
   console.log('\nhost half — usage roll-up from the cost-meter ledger and the fold')
   const USAGE = '/dsh-claude-style/usage'
   const now = new Date()
@@ -115,9 +118,9 @@ async function hostUsage({ mod, fakeHost, request, browser, scratchHome, scratch
     JSON.stringify(value.models))
   const hourOf = (hours) => (Array.isArray(hours) ? hours.indexOf(1) : null)
   const sum = (hours) => hours.reduce((total, count) => total + count, 0)
-  check('only the folded day has an hour histogram, and the whole one is its own',
-    Array.isArray(value.hours) && value.hours[15] === 1 && sum(value.hours) === 1 &&
-      days[0]?.hours === undefined && days[1]?.hours === undefined &&
+  check('every day the fold settled on carries its hour histogram, the ledger\'s days included, and the whole one sums them',
+    Array.isArray(value.hours) && value.hours[9] === 1 && value.hours[15] === 1 && sum(value.hours) === 2 &&
+      days[0]?.hours === undefined && hourOf(days[1]?.hours) === 9 && sum(days[1].hours) === 1 &&
       hourOf(days[2]?.hours) === 15 && sum(days[2].hours) === 1,
     JSON.stringify({ hours: value.hours, days: days.map((day) => [day.date, day.hours]) }))
   // A warm start is the case the size and modification time cache exists for:
@@ -184,11 +187,66 @@ async function hostUsage({ mod, fakeHost, request, browser, scratchHome, scratch
     JSON.stringify({ version: keptRecord.version, s1: keptRecord.sessions?.s1 }))
   fs.rmSync(scratchHome, { recursive: true, force: true })
 
+  // A ledger day can be only part of that day: a history reset or a cleared
+  // file starts it mid-day. The fold's fuller figure is what the panel shows,
+  // and the ledger's logical session ids join the record's stored names, so a
+  // session behind both accounts counts once (#194).
+  console.log('\nhost half — a partly recorded ledger day keeps the fold\'s fuller figure')
+  {
+    const home = runsPath(ROOT, 'smoke', 'home-usage-partial')
+    fs.rmSync(home, { recursive: true, force: true })
+    const cwd = path.join(home, 'sessions', '--D-smoke--')
+    fs.mkdirSync(path.join(home, 'storages', 'cost-meter'), { recursive: true })
+    const partly = localDay(at(-1, 9))
+    const ledgerDay = localDay(at(-2, 9))
+    fs.writeFileSync(path.join(home, 'storages', 'cost-meter', 'ledger.json'), JSON.stringify({
+      version: 1,
+      days: {
+        [partly]: {
+          input: 5, output: 0, cacheRead: 0, cacheWrite: 0, calls: 1,
+          sessions: [{ id: 'plugin:one' }],
+          byProviderModel: { 'alpha:model-a': cell(5, 0) },
+        },
+        [ledgerDay]: {
+          input: 100, output: 0, cacheRead: 0, cacheWrite: 0, calls: 1,
+          sessions: [{ id: 'plugin:two' }],
+          byProviderModel: { 'alpha:model-b': cell(100, 0) },
+        },
+      },
+    }))
+    // The first session's logical id is the ledger's own spelling, which the
+    // storage escapes into a directory name; the second is only in the ledger.
+    const shared = 'plugin~003Aone'
+    fs.mkdirSync(path.join(cwd, shared), { recursive: true })
+    fs.writeFileSync(path.join(cwd, shared, 'session.v4.jsonl.zstd'), 'x')
+    fs.mkdirSync(path.join(cwd, 's2'), { recursive: true })
+    fs.writeFileSync(path.join(cwd, 's2', 'session.v4.jsonl.zstd'), 'x')
+    const host = fakeHost(mod, {
+      fenced: true,
+      home,
+      events: { 'plugin:one': [settlement(at(-1, 9), 1)], s2: [settlement(at(-2, 9), 1)] },
+    })
+    const answer = (await settledUsage(host)).value ?? {}
+    const byDate = Object.fromEntries((Array.isArray(answer.days) ? answer.days : []).map((day) => [day.date, day]))
+    check('a partly recorded ledger day keeps the fold\'s fuller figure and its model split',
+      byDate[partly]?.input === 10 && JSON.stringify(byDate[partly]?.models) === JSON.stringify({ 'model-b': 11 }),
+      JSON.stringify(byDate[partly]))
+    check('a ledger day the fold recorded less of keeps the ledger\'s figures and adds the fold\'s session',
+      byDate[ledgerDay]?.input === 100 &&
+        JSON.stringify(byDate[ledgerDay]?.sessionIds) === JSON.stringify(['plugin~003Atwo', 's2']) &&
+        byDate[ledgerDay]?.sessions === 2,
+      JSON.stringify(byDate[ledgerDay]))
+    check('the ledger\'s logical session id and the stored directory name are one session in the count',
+      answer.totals?.sessions === 3 && answer.totals?.input === 110 && answer.source === 'cost-meter+local',
+      JSON.stringify({ source: answer.source, totals: answer.totals, days: byDate }))
+    fs.rmSync(home, { recursive: true, force: true })
+  }
+
   // The fold cache this record replaced is migrated where the record does not
   // exist yet, so the days of the sessions deleted before it come across
   console.log('\nhost half — the previous fold cache is migrated into the record')
   {
-    const home = path.join(ROOT, '.debug', 'smoke-home-usage-migrate')
+    const home = runsPath(ROOT, 'smoke', 'home-usage-migrate')
     fs.rmSync(home, { recursive: true, force: true })
     const day = localDay(at(-3, 11))
     const slots = new Array(24).fill(0)
@@ -230,7 +288,7 @@ async function hostUsage({ mod, fakeHost, request, browser, scratchHome, scratch
   // sessions are left, so it is moved aside before the pass rebuilds it
   console.log('\nhost half — an unreadable record is moved aside before it is rebuilt')
   {
-    const home = path.join(ROOT, '.debug', 'smoke-home-usage-corrupt')
+    const home = runsPath(ROOT, 'smoke', 'home-usage-corrupt')
     fs.rmSync(home, { recursive: true, force: true })
     const cwd = path.join(home, 'sessions', '--D-smoke--')
     fs.mkdirSync(path.join(cwd, 'r1'), { recursive: true })
@@ -253,7 +311,7 @@ async function hostUsage({ mod, fakeHost, request, browser, scratchHome, scratch
   // wrote while this pass was folding stays in it
   console.log('\nhost half — a write keeps what another instance wrote during the pass')
   {
-    const home = path.join(ROOT, '.debug', 'smoke-home-usage-concurrent')
+    const home = runsPath(ROOT, 'smoke', 'home-usage-concurrent')
     fs.rmSync(home, { recursive: true, force: true })
     const cwd = path.join(home, 'sessions', '--D-smoke--')
     fs.mkdirSync(path.join(cwd, 'c1'), { recursive: true })
@@ -284,7 +342,7 @@ async function hostUsage({ mod, fakeHost, request, browser, scratchHome, scratch
   // this half had before the observation existed (D12).
   console.log('\nhost half — the log reader a host without the observation still answers')
   {
-    const home = path.join(ROOT, '.debug', 'smoke-home-readsession')
+    const home = runsPath(ROOT, 'smoke', 'home-readsession')
     fs.rmSync(home, { recursive: true, force: true })
     const cwd = path.join(home, 'sessions', '--D-smoke--')
     fs.mkdirSync(path.join(cwd, 'f1'), { recursive: true })
@@ -312,7 +370,7 @@ async function hostUsage({ mod, fakeHost, request, browser, scratchHome, scratch
   // it every request folds the whole corpus again (#126).
   console.log('\nhost half — a log the reader throws on leaves the rest of the record written')
   {
-    const home = path.join(ROOT, '.debug', 'smoke-home-usage-broken')
+    const home = runsPath(ROOT, 'smoke', 'home-usage-broken')
     fs.rmSync(home, { recursive: true, force: true })
     const cwd = path.join(home, 'sessions', '--D-smoke--')
     for (const id of ['ok-a', 'bad-b', 'ok-c']) {
@@ -346,7 +404,7 @@ async function hostUsage({ mod, fakeHost, request, browser, scratchHome, scratch
   // longer than the period would otherwise leave no idle stretch at all (#126).
   console.log('\nhost half — a pass that outlasts the period is not folded back to back')
   {
-    const home = path.join(ROOT, '.debug', 'smoke-home-usage-slow')
+    const home = runsPath(ROOT, 'smoke', 'home-usage-slow')
     fs.rmSync(home, { recursive: true, force: true })
     const cwd = path.join(home, 'sessions', '--D-smoke--')
     fs.mkdirSync(path.join(cwd, 'slow-1'), { recursive: true })
@@ -390,6 +448,62 @@ async function hostUsage({ mod, fakeHost, request, browser, scratchHome, scratch
       Date.now = realNow
     }
     fs.rmSync(home, { recursive: true, force: true })
+  }
+
+  // The two spellings a session id has: the usage pass reads a log by its
+  // logical id while the record and the directory keep the stored name. The
+  // mapping has to survive every id a plugin can generate, and the merge has to
+  // keep a folded day the ledger never recorded — the history before the cost
+  // meter was installed.
+  console.log('\nhost half — session id spellings and the days the ledger leaves out')
+  {
+    const names = await import(pathToFileURL(path.join(ROOT, 'lib', 'host', 'session-name.js')).href)
+    const ids = [
+      'im:slack:dm:user:token@example.com',
+      'a/../b',
+      '会话 id',
+      '~007E',
+      '.',
+      '..',
+      'plain-id_1.2',
+    ]
+    const bad = []
+    for (const id of ids) {
+      const stored = names.sessionDirectoryName(id)
+      const back = names.sessionIdFromDirectoryName(stored)
+      if (back !== id) bad.push(`${id} -> ${stored} -> ${back}`)
+    }
+    check('every logical id round-trips through its stored directory name',
+      bad.length === 0, bad.join('; '))
+
+    const summary = await import(pathToFileURL(path.join(ROOT, 'lib', 'host', 'usage-summary.js')).href)
+    const buckets = (input, sessionId) => ({
+      input, output: 0, cacheRead: 0, cacheWrite: 0, calls: 1, sessionIds: [sessionId],
+    })
+    const ledger = new Map([['2026-01-02', buckets(20, 'ledger-session')]])
+    const folded = new Map([['stored-a', {
+      days: new Map([
+        ['2026-01-01', buckets(1, 'folded-a')],
+        ['2026-01-02', buckets(2, 'folded-a')],
+        ['2026-01-03', buckets(3, 'folded-a')],
+      ]),
+    }]])
+    const merged = summary.mergeLedgerFold(ledger, folded)
+    check('a day the ledger never recorded survives before the ledger\'s newest day',
+      merged.days.get('2026-01-01')?.input === 1 && merged.days.get('2026-01-03')?.input === 3,
+      JSON.stringify([...merged.days.entries()].map(([date, day]) => [date, day.input])))
+    const both = merged.days.get('2026-01-02')
+    check('a day both accounts carry keeps the fuller account\'s figures and both sessions',
+      both?.input === 20 && both.sessions === 2 &&
+        JSON.stringify(both.sessionIds) === JSON.stringify(['ledger-session', 'stored-a']),
+      JSON.stringify(both))
+    const partial = new Map([['2026-01-04', buckets(5, 'ledger-session')]])
+    const fuller = new Map([['stored-b', { days: new Map([['2026-01-04', buckets(9, 'stored-b')]]) }]])
+    const picked = summary.mergeLedgerFold(partial, fuller).days.get('2026-01-04')
+    check('a partly recorded ledger day keeps the fold\'s fuller figure and both sessions',
+      picked?.input === 9 && picked.sessions === 2 &&
+        JSON.stringify(picked.sessionIds) === JSON.stringify(['ledger-session', 'stored-b']),
+      JSON.stringify(picked))
   }
 }
 

@@ -1,19 +1,8 @@
 import { buildElement, setAttributeIfChanged } from '@dsh-claude-style/engine/dom'
 import { inPageBox, pageViewport } from './page-zoom'
 
-/**
- * The skin's popovers: one card shell, one dwell and grace, one card on screen
- * at a time.
- *
- * Every skin card carries `dsh-claude-popover-card` (shared/popover.css) for
- * its look; a feature's own stylesheet adds only placement and width, so one
- * picker's change cannot reach another.
- *
- * The host offers no global popover exclusion, so each popover registers its
- * close path here and calls `closeOtherPopovers` before it opens. A picker's
- * second level registers as one entry with its first. The registry is module
- * state: a feature unregisters on teardown, and a reload replaces a closer by
- * name because the previous generation's scope is gone.
+/** Features register closers and close siblings before opening; nested levels share one registration.
+ * Replacement by name drops stale reload closures, and teardown must unregister.
  */
 
 export const POPOVER_MARGIN = 8
@@ -40,12 +29,7 @@ export interface AnchorSpace {
   viewport: { width: number, height: number }
 }
 
-/**
- * The trigger's box and the window's size in the page's own pixels: a bounding
- * rect is measured in the viewport's, while a card's laid-out size and every
- * `left`/`top` written for it are read in the page's, which the reader's page
- * zoom scales (shared/page-zoom.ts).
- */
+/** DOMRects and written card coordinates use different spaces under page zoom. */
 export function anchorSpace(trigger: Element): AnchorSpace {
   return { rect: inPageBox(trigger.getBoundingClientRect()), viewport: pageViewport() }
 }
@@ -79,6 +63,26 @@ export function resolveAnchoredPosition(rect: DOMRect, width: number, height: nu
 }
 
 /**
+ * A resolved position held inside the window, in the space the position is
+ * written in: a card laid out taller than the room beside its trigger still
+ * starts at the top of the window instead of running off its bottom edge.
+ * `anchorSpace`'s viewport is the window in the page's pixels, which is the
+ * space a card's `left` and `top` are read in (shared/page-zoom.ts).
+ */
+export function clampToViewport(
+  position: { x: number, y: number },
+  width: number,
+  height: number,
+  viewport: { width: number, height: number } = pageViewport(),
+  margin = POPOVER_MARGIN,
+) {
+  return {
+    x: Math.max(margin, Math.min(position.x, viewport.width - width - margin)),
+    y: Math.max(margin, Math.min(position.y, viewport.height - height - margin)),
+  }
+}
+
+/**
  * The top of a card that opens over its trigger: above it while it fits there,
  * below it while it fits there instead, and otherwise held against the window's
  * edge on the side with more room. A card that fits neither way covers the
@@ -102,7 +106,8 @@ function topOverTrigger(rect: DOMRect, height: number, gap: number, margin: numb
  */
 export function positionAnchoredPopover(trigger: Element, pop: HTMLElement, opts: AnchorOptions = {}) {
   const space = anchorSpace(trigger)
-  const { x, y } = resolveAnchoredPosition(space.rect, pop.offsetWidth, pop.offsetHeight, { ...opts, viewport: space.viewport })
+  const anchored = resolveAnchoredPosition(space.rect, pop.offsetWidth, pop.offsetHeight, { ...opts, viewport: space.viewport })
+  const { x, y } = clampToViewport(anchored, pop.offsetWidth, pop.offsetHeight, space.viewport, opts.margin || POPOVER_MARGIN)
   const leftValue = `${Math.round(x)}px`
   const topValue = `${Math.round(y)}px`
   if (opts.important) {

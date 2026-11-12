@@ -50,7 +50,7 @@ export default {
     check('a custom accent takes the accent tokens, with the light ink on a dark fill',
       tinted.accent === '#1a7f5a' && tinted.accentInk === '#faf9f5', JSON.stringify({ accent: tinted.accent, ink: tinted.accentInk }))
     check('an unpicked inline-code colour keeps the card\'s own ink for each scheme, so the chip stays legible on the dark canvas',
-      !!tinted.codeInk && tinted.codeInk.light === 'rgb(148, 51, 51)' && tinted.codeInk.dark === 'rgb(232, 160, 138)',
+      !!tinted.codeInk && tinted.codeInk.light === 'rgb(22, 22, 22)' && tinted.codeInk.dark === 'rgb(253, 253, 253)',
       JSON.stringify(tinted.codeInk))
     const accented = brand.accented || {}
     const accentRgb = brand.accentRgb
@@ -108,7 +108,7 @@ export default {
     check('teardown takes the pill, its placement and the strip stamp off the view tabs', pill.left === false, JSON.stringify(pill.left))
     commonChecks(r)
   },
-  // The strip's row shape (0.2.1-rc.3): the host draws the tablist and the
+  // The strip's row with the overflow button: the host draws the tablist and the
   // overflow button in a row of its own and counts the tabs it keeps from that
   // row's width, so the row keeps the header's width while the plate inside it
   // hugs the tabs and the pill travels inside the plate.
@@ -124,6 +124,10 @@ export default {
         row.width === row.headerWidth && row.counted === row.headerWidth &&
         plate.width < row.width - chip.width,
       JSON.stringify({ justifyContent: row.justifyContent, pointerEvents: row.pointerEvents, row: row.width, counted: row.counted, plate: plate.width, chip: chip.width }))
+    check('the lift rides the plate and the button, leaving the row that spans the header untranslated',
+      row.transform !== undefined && row.transform.row === 'none' &&
+        row.transform.list !== undefined && row.transform.list !== 'none',
+      JSON.stringify(row.transform))
     check('the plate is the skin\'s small switch, carrying its shell and its own radius',
       plate.radius === '7px' && plate.padding === '2px' && plate.gap === '2px' && plate.background !== 'rgba(0, 0, 0, 0)',
       JSON.stringify(plate))
@@ -133,6 +137,10 @@ export default {
       JSON.stringify({ group: row.groupCentre, width: row.width, plate: plate, chip: chip }))
     check('the tabs are the compact 22px segment, without the shipped underline',
       row.tabHeight === '22px' && row.underline === 'none', JSON.stringify({ height: row.tabHeight, underline: row.underline }))
+    const tabBoxes = row.tabBoxes || []
+    check('neighbouring view-tab buttons keep separate layout boxes',
+      tabBoxes.length === 4 && tabBoxes.every((box, index) => index === 0 || tabBoxes[index - 1].right <= box.left),
+      JSON.stringify(tabBoxes))
     check('the view tabs draw their pill under the active tab inside the plate, without sliding in',
       under(row.pill) && row.pill.slides.length === 0, JSON.stringify(row.pill))
     check('a view switch slides the pill to the newly active tab',
@@ -149,11 +157,9 @@ export default {
     const laid = b.laid || {}
     const marks = laid.marks || {}
     const right = b.viewportRight - (b.controls + b.air)
-    /** The caption row's own middle for a 28px box; the title sits the skin's optical drop below it. */
+    /** The caption row's own middle for a 28px box, shared by the title and the controls. */
     const middle = Math.round((b.band - 28) / 2)
     const top = middle + b.titleDrop
-    // Where the row sits with the lift taken back out: the header's own inset.
-    const naturalRow = laid.row.y - parseFloat(laid.rowLift || '0')
     check('the caption row takes both sides: the title at the row\'s left, the two control clusters against the caption buttons',
       marks.band === 'title actions' && marks.title === true && marks.utilities === true && marks.corner === true &&
         laid.title.x === laid.row.x && laid.title.y === top &&
@@ -164,16 +170,35 @@ export default {
       laid.titlePosition === 'fixed' && laid.titleZ === '30' &&
         laid.titleRegion === 'no-drag' && laid.utilitiesRegion === 'no-drag' && laid.cornerRegion === 'no-drag',
       JSON.stringify({ position: laid.titlePosition, z: laid.titleZ, regions: [laid.titleRegion, laid.utilitiesRegion, laid.cornerRegion] }))
+    check('the lifted title is drawn in the caption row, where a press on its own place reaches it: the cluster\'s own fade is dropped while the title stands outside that cluster',
+      laid.titleHit === true && laid.clusterMask === 'none',
+      JSON.stringify({ hit: laid.titleHit, mask: laid.clusterMask }))
     check('the words the row carries are the window\'s own: a press on the title starts no selection',
       laid.titleSelect === 'none' && laid.headerSelect === 'none',
       JSON.stringify({ title: laid.titleSelect, header: laid.headerSelect }))
-    check('the title is handed the room left between its own edge and the controls once the strip\'s width is reserved, and the row it left keeps its gap under it',
+    check('the cluster the row keeps beside the title takes the caption row\'s next place, so the row the title leaves holds nothing it has to keep standing',
+      marks.trail === true && laid.preset.x === laid.title.right + b.air && laid.preset.y === middle + b.titleDrop &&
+        laid.trailLeft === laid.title.right + b.air + 'px' && laid.trailHit === true,
+      JSON.stringify({ marks: marks, title: laid.title, preset: laid.preset, trailLeft: laid.trailLeft, trailHit: laid.trailHit }))
+    check('the title is handed the room up to the cluster beside it rather than the width its own box holds, and the row it left starts at the title box without the host\'s old inset',
       laid.titleLeft === laid.row.x + 'px' &&
-        laid.titleMax === laid.utilities.x - b.air - ((laid.strip.right - laid.strip.x) + b.air) - laid.title.x + 'px' &&
-        laid.row.y === laid.title.y + 28 + b.gap && laid.rowPosition === 'relative' && laid.rowOffset === laid.rowLift &&
+        parseFloat(laid.titleMax) > laid.title.right - laid.title.x &&
+        laid.row.y === laid.title.y + 28 + b.rowGap && laid.rowPosition === 'relative' && laid.rowOffset === laid.rowLift &&
         laid.row.y === laid.rowLift.replace('px', '') * 1 + laid.header.y + parseFloat(laid.headerPaddingTop) &&
-        laid.preset.x === laid.row.x,
-      JSON.stringify({ left: laid.titleLeft, max: laid.titleMax, lift: laid.rowLift, offset: laid.rowOffset, row: laid.row, header: laid.header, preset: laid.preset, utilities: laid.utilities, strip: laid.strip }))
+        laid.headerPaddingTop === '0px',
+      JSON.stringify({ left: laid.titleLeft, max: laid.titleMax, box: laid.title.right - laid.title.x, lift: laid.rowLift, offset: laid.rowOffset, row: laid.row, header: laid.header, utilities: laid.utilities, strip: laid.strip }))
+    const names = b.names || {}
+    const before = names.before || {}
+    const long = names.long || {}
+    const short = names.short || {}
+    const again = names.again || {}
+    check('a session name longer than the one before widens the title again, and a name that returns after a shorter one is not left clipped at the shorter one\'s width',
+      before.width < long.width && short.width < long.width && again.width === long.width &&
+        long.max === again.max && parseFloat(long.max) > long.width,
+      JSON.stringify(names))
+    check('the cluster beside the title follows a name that grew back in the same pass, one air gap off the title\'s own end',
+      long.presetX === long.right + b.air && short.presetX === short.right + b.air && again.presetX === again.right + b.air,
+      JSON.stringify(names))
     const panelClosed = b.panelClosed || {}
     check('the right panel\'s collapse control is the skin\'s own, drawn in the header\'s row: it shows while the panel is open and hides with the panel, and the panel\'s own copy stays where the host drew it',
       laid.closeInline === 'inline-flex' && laid.closeShown !== 'none' &&
@@ -181,24 +206,34 @@ export default {
       JSON.stringify({ laid: { close: laid.closeInline, shown: laid.closeShown, host: laid.hostToggleDisplay }, closed: panelClosed }))
     const solo = b.solo || {}
     check('with the corner seat empty — the right sidebar is open — the cluster that is there still lifts, into the corner\'s own place',
-      solo.marks.band === 'title actions' && solo.marks.corner === false && solo.utilities.right === right,
+      solo.marks.band === 'title actions' && solo.marks.corner === false && solo.marks.trail === true && solo.utilities.right === right,
       JSON.stringify(solo))
     const tight = b.tight || {}
-    check('when the shell\'s own seat takes the row\'s left end, both sides stay in the header\'s row: no marker, no stamp, the row back at its own inset',
-      tight.marks.band === null && tight.marks.row === false && tight.marks.title === false &&
-        tight.marks.utilities === false && tight.marks.corner === false &&
-        tight.row.y === naturalRow && tight.title.y > b.band && tight.utilities.y > b.band,
-      JSON.stringify({ tight: tight, natural: naturalRow }))
     const off = b.off || {}
+    check('when the shell\'s own seat takes the row\'s left end, both sides stay in the header\'s row: no marker, no stamp, the row back at its own inset',
+      tight.marks.band === null && tight.marks.row === false && tight.marks.title === false && tight.marks.trail === false &&
+        tight.marks.utilities === false && tight.marks.corner === false &&
+        tight.row.y === (off.row || {}).y && tight.title.y > b.band && tight.utilities.y > b.band,
+      JSON.stringify({ tight: tight, off: off.row }))
+    const crowded = b.crowded || {}
+    const relaxed = b.relaxed || {}
+    check('a cluster too wide for the place beside the title keeps the header\'s row, and the title is handed that row\'s whole run',
+      crowded.marks.band === 'title actions' && crowded.marks.title === true && crowded.marks.trail === false &&
+        (crowded.preset.right - crowded.preset.x) > 120 && parseFloat(crowded.titleMax) > crowded.preset.right - crowded.preset.x,
+      JSON.stringify(crowded))
+    check('a step of room buys the cluster its place beside the title again, one air gap off the title\'s own end',
+      relaxed.marks.trail === true && relaxed.preset.x === relaxed.title.right + b.air,
+      JSON.stringify(relaxed))
     const back = b.back || {}
-    check('switching the feature off hands the row back whole — the strip the other feature placed stays — and switching it on places both sides again',
-      off.marks.band === null && off.marks.title === false && off.marks.utilities === false && off.marks.corner === false &&
-        off.stripStamped === true &&
-        back.marks.band === 'title actions' && back.marks.title === true && back.marks.utilities === true,
+    check('switching the feature off hands the row back whole — the strip the other feature placed stays, and the cluster\'s own fade with it — and switching it on places both sides again',
+      off.marks.band === null && off.marks.title === false && off.marks.trail === false && off.marks.utilities === false && off.marks.corner === false &&
+        off.stripStamped === true && off.clusterMask !== 'none' &&
+        back.marks.band === 'title actions' && back.marks.title === true && back.marks.trail === true && back.marks.utilities === true &&
+        back.titleHit === true && back.clusterMask === 'none',
       JSON.stringify({ off: off, back: back }))
     const left = b.left || {}
     check('taking the desktop shell\'s marker away leaves no band marker and no stamps behind',
-      left.band === null && left.row === false && left.title === false && left.utilities === false && left.corner === false,
+      left.band === null && left.row === false && left.title === false && left.trail === false && left.utilities === false && left.corner === false,
       JSON.stringify(left))
     commonChecks(r)
   },
@@ -221,45 +256,39 @@ export default {
     check('Enter on an open composer menu reaches the host', same(r.keys, ['host picked the menu item']), JSON.stringify(r.keys))
     commonChecks(r)
   },
-  // The sidebar's search box: placed by the style preference — in the brand
-  // row resting hidden, in a row of its own below it, or not drawn at all
-  // while the host's own button stands — and opening the host's modal through
+  // The sidebar's search entry: the Standalone style registers a host panel-list
+  // row without a main-panel seat; the Icon style hands it back and leaves the
+  // host's own search control in place. Either way the host's modal opens through
   // a root of the skin's own.
   search(r) {
     basicChecks(r)
     const search = r.search || {}
-    check('the search box goes in the brand row beside the brand, and rests hidden until the sidebar is hovered',
-      search.placed === true && search.rowMarked === true && search.resting === 'hidden', JSON.stringify(search))
-    check('pressing the search box renders the host modal through a root of the skin\'s own', search.modalRendered === true, JSON.stringify(search))
+    check('the Standalone style registers the search entry in the sidebar panel list when the case starts',
+      search.registered === true && search.rowMarked === false, JSON.stringify(search))
+    check('pressing the host\'s search control renders the host modal through a root of the skin\'s own', search.modalRendered === true, JSON.stringify(search))
     const standalone = search.standalone || {}
-    check('the Standalone style gives the box a row of its own under the brand row, shown without a hover, and the brand row keeps the host\'s layout',
-      standalone.barAfterRow === true && standalone.triggerInBar === true && standalone.triggerVisibility === 'visible' &&
-        standalone.rowMarked === false && standalone.hostSlotPosition === 'absolute',
+    check('the Standalone style keeps the panel entry and hides the host\'s own search slot',
+      standalone.panelRegistered === true && standalone.rowMarked === false && standalone.hostSlotPosition === 'absolute',
       JSON.stringify(standalone))
-    // The rows under it span the column's own padding, so the box's border has
-    // to stand on those two edges: its row may add no inline padding of its own.
-    check('the Standalone box is exactly as wide as the rows under it',
-      standalone.boxWidth !== null && standalone.boxWidth === standalone.barWidth && standalone.boxWidth > 0,
-      JSON.stringify({ boxWidth: standalone.boxWidth, barWidth: standalone.barWidth }))
     const icon = search.icon || {}
-    check('the Icon style draws no box of the skin\'s, puts the host\'s own search slot back in the header, and takes its click over',
-      icon.triggerInRow === false && icon.rowMarked === false && icon.barAfterRow === false &&
+    check('the Icon style hands the panel entry back, leaves the host\'s search slot in the header, and takes its click over',
+      icon.panelRegistered === false && icon.rowMarked === false &&
         icon.hostSlotPosition !== 'absolute' && icon.hostSlotWidth > 10 && icon.hostClicksReachingHost === 0,
       JSON.stringify(icon))
     const back = search.back || {}
-    check('switching the style back to Cover the brand seats the box in the brand row again, live',
-      back.triggerInRow === true && back.rowMarked === true && back.triggerVisibility === 'hidden' && back.hostSlotPosition === 'absolute',
+    check('switching the style back to Standalone registers the entry again, live',
+      back.panelRegistered === true && back.rowMarked === false && back.hostSlotPosition === 'absolute',
       JSON.stringify(back))
-    // The New session row carries the same host markup the box's own caps are
+    // The New session row carries the same host markup the palette's caps are
     // cut for; both are read field by field, so the hints cannot drift apart.
     const caps = search.keycaps || {}
     const cap = Array.isArray(caps.search) && caps.search.length === 1 ? caps.search[0] : null
-    check('the New session row wears the search box\'s own key caps, and the `+` between them is gone',
+    check('the New session row wears the search button\'s own key caps, and the `+` between them is gone',
       cap !== null && Array.isArray(caps.shortcut) && caps.shortcut.length === 2 &&
         caps.shortcut.every((entry) => same(entry, cap)) &&
         caps.separators.length === 1 && caps.separators.every((display) => display === 'none'),
       JSON.stringify(caps))
-    check('teardown takes the search box, its row mark and its root away',
+    check('teardown takes the search entry and its root away',
       search.left === 0 && search.rootUnmounted === true, JSON.stringify(search))
     commonChecks(r)
   },
@@ -401,6 +430,11 @@ export default {
       claude.base === '#ffffff' && claude.body === 'rgb(255, 255, 255)' && claude.account === 'rgb(255, 255, 255)' &&
         claude.popover === 'rgb(255, 255, 255)' && /Anthropic Serif Web Text/.test(claude.heading || ''),
       JSON.stringify(claude))
+    const system = hp.system || {}
+    check('System sans shares one proportional stack and leaves code monospace',
+      system.family === 'ui-sans-serif,system-ui,sans-serif' && String(system.heading).replace(/\s+/g, '') === system.family &&
+        /JetBrains Mono/.test(system.code || '') && /ui-monospace/.test(system.code || ''),
+      JSON.stringify(system))
     // A wallpaper under the Claude palette. The shell canvases stand down
     // and one fixed mask in the canvas colour lies over the wallpaper; the base
     // canvas the host paints its dialogs and cards with stays opaque, and so do
@@ -416,6 +450,14 @@ export default {
       wallClaude.base === '#ffffff' && wallClaude.popover === claude.popover && wallClaude.account === claude.account &&
         wallClaude.search === claude.search,
       JSON.stringify({ wallpaper: wallClaude, claude }))
+    const half = hp.halfWallpaper || {}
+    check('the background opacity multiplies the wallpaper mask while the cards keep their paint',
+      /^color\(srgb 1 1 1 \/ 0\.43\)$/.test(half.mask || '') && half.popover === claude.popover && half.search === claude.search,
+      JSON.stringify(half))
+    const deepseek = hp.deepseekWallpaper || {}
+    check('the DeepSeek card uses the same opacity on its wallpaper mask',
+      /^color\(srgb 0\.984314 0\.988235 1 \/ 0\.43\)$/.test(deepseek.mask || '') && deepseek.popover === half.popover,
+      JSON.stringify(deepseek))
     check('with the wallpaper gone the skin\'s own fills are back and the mask is lifted',
       CLAUDE_FILLS.every(([key, value]) => claude[key] === value) && claude.sidebarFill === '#fafafa' &&
         claude.mask === 'rgba(0, 0, 0, 0)',

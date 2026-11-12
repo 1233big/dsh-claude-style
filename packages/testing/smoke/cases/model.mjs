@@ -54,8 +54,8 @@ export default {
       one['Kimi K3'] !== undefined && one['Kimi K3'].meter === null,
       JSON.stringify(one['Kimi K3']))
     check('every meter stands immediately in front of its row\'s check, and names its judgement',
-      levelOne.every((row) => row.meter === null || (row.meter.beforeCheck === true && row.meter.title !== null && row.meter.title !== '')),
-      JSON.stringify(levelOne.map((row) => row.meter === null ? null : { beforeCheck: row.meter.beforeCheck, title: row.meter.title })))
+      levelOne.every((row) => row.meter === null || (row.meter.beforeCheck === true && row.meter.name !== null && row.meter.name !== '')),
+      JSON.stringify(levelOne.map((row) => row.meter === null ? null : { beforeCheck: row.meter.beforeCheck, name: row.meter.name })))
     const listed = one['V4.1 Flash']
     check('the seat\'s row is drawn as the list rows are: same height, padding, radius and layout',
       meter.currentRow !== null && meter.currentRow !== undefined && listed !== undefined &&
@@ -88,5 +88,23 @@ export default {
       seat.text !== null && seat.text.includes('V4.1 Flash') && seat.text.includes('1017') &&
         seat.tagBg !== null && seat.tagBg !== 'rgba(0, 0, 0, 0)' && neutral(seat.tagBg) && neutral(seat.tagColor),
       JSON.stringify(seat))
+    const external = r.externalControls || {}
+    check('the control registry mounts an independent model picker, rejects an unknown id and preserves the composer on teardown',
+      external.available === true && external.mountedCount === 2 && external.externalPopover === true &&
+        external.unknownRejected === true && external.remainingCount === 1 && external.slotClean === true &&
+        external.externalStyle != null && external.externalStyle.display === 'flex' && external.externalStyle.height === '28px' &&
+        external.externalStyle.border === '0px' && external.externalStyle.background === 'rgba(0, 0, 0, 0)',
+      JSON.stringify(external))
+  },
+  'model-account'(r) {
+    basicChecks(r)
+    const account = r.modelAccount || {}
+    check('with no API key, the signed-in account leads the first level beside the chosen provider',
+      Array.isArray(account.levelOne) && account.levelOne[0] === 'DeepSeek V4.1 Flash' && account.levelOne[1] === 'GLM-5.3' &&
+        account.lead === 'DeepSeek Account',
+      JSON.stringify(account))
+    check('the account that leads the first level is not repeated behind More models',
+      Array.isArray(account.levelTwo) && account.levelTwo.includes('Gateway Flash') && !account.levelTwo.includes('DeepSeek V4.1 Flash'),
+      JSON.stringify(account.levelTwo))
   },
 }

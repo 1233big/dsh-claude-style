@@ -10,51 +10,35 @@ export type CopyPair = Readonly<Record<string, string>>
 /** A feature's own copy, by key (its `<功能>.copy.json`). */
 export type CopyEntries = Readonly<Record<string, CopyPair>>
 
-/**
- * The language a copy line falls back to when the shell's own language has no
- * line for it. A feature's copy ships with the bundle, so every line is written
- * in this language as well (`<功能>.copy.json` beside the feature).
- */
+/** Every feature copy entry must include this fallback locale. */
 export const COPY_FALLBACK_LOCALE = 'en'
 
-/** The shell's active locale id, or the language the copy ships in when it cannot be read. */
+/** Missing host locale services or snapshots use the bundled fallback (D12). */
 export function activeLocale(ctx?: HostContext | null): string {
-  const active = (ctx || hostCtx)?.get('locale')?.getSnapshot().active
+  const locale = (ctx || hostCtx)?.get('locale')
+  const snapshot = typeof locale?.getSnapshot === 'function' ? locale.getSnapshot() : undefined
+  const active = snapshot?.active
   if (typeof active === 'string' && active) return active
   return COPY_FALLBACK_LOCALE
 }
 
-/**
- * The host's `chat` namespace translate seat, or null where the host carries no
- * locale service. A surface with no context of its own — the settings page —
- * reads the host's words through the module's context (core/host).
- */
 export function hostChatSeat(ctx?: HostContext | null): HostText | null {
   const locale = (ctx || hostCtx)?.get('locale')
   return typeof locale?.bind === 'function' ? locale.bind('chat') : null
 }
 
-/**
- * One string out of the host's own `chat` namespace, or `fallback` where the
- * host carries no locale service or no such string: a seat that hands the key
- * back has no translation for it.
- */
+/** A missing translation or an unchanged key uses `fallback`. */
 export function hostChatCopy(key: string, fallback: string, ctx?: HostContext | null) {
   const text = hostChatSeat(ctx)?.(key)
   return typeof text === 'string' && text !== '' && text !== key ? text : fallback
 }
 
-/** Fill a copy string's `{name}` slots from `params`; a slot with no value stays as written. */
 function fillTemplate(text: string, params?: CopyParams) {
   if (!params) return text
   return text.replace(/\{(\w+)\}/g, (match, name: string) => Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : match)
 }
 
-/**
- * One localized string out of a `{ locale: text }` pair, fallback locale last:
- * the language the copy ships in, or the one a data document names (the model
- * copy's own `fallback`).
- */
+/** Try the active locale and its language prefix before the requested fallback. */
 export function localized(pair: Record<string, unknown> | null | undefined, ctx?: HostContext | null, fallback: string = COPY_FALLBACK_LOCALE) {
   if (!pair || typeof pair !== 'object') return ''
   const loc = activeLocale(ctx)
@@ -71,22 +55,17 @@ export function localized(pair: Record<string, unknown> | null | undefined, ctx?
   return ''
 }
 
-/**
- * One line of a feature's own copy: the shell's language first, then the
- * language the copy ships in. The key is the feature's own — its copy file is
- * the only place the line exists — and the build holds every call to one, so a
- * line that is not there is a build failure rather than a runtime question.
- */
+/** Missing copy keys are build failures; returning the key is only a runtime diagnostic. */
 export function featureCopy(entries: CopyEntries, key: string, params?: CopyParams) {
   const pair = entries[key]
   return fillTemplate(pair === undefined ? key : localized(pair), params)
 }
 
-/**
- * One line of a feature's copy in a language named by a preference rather than
- * by the shell: the account-hold screen reproduces a real Claude page, so it is
- * read in the language that page was written in whatever the UI is set to.
- */
+export function createCopy<C extends CopyEntries>(entries: C) {
+  return (key: keyof C & string, params?: CopyParams) => featureCopy(entries, key, params)
+}
+
+/** The account-hold reproduction follows its own locale preference, independently of the shell. */
 export function copyIn(entries: CopyEntries, key: string, locale: string, params?: CopyParams) {
   const pair = entries[key]
   const text = pair === undefined ? '' : (pair[locale] || pair[COPY_FALLBACK_LOCALE] || '')

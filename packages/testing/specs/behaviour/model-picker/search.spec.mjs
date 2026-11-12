@@ -59,6 +59,20 @@ export default spec({ page: 'effort' }, ({ test }) => {
     t.expectThat.equal(await t.read.text(t.surface('model.sub-label')), 'Z.ai', 'the provider label stands above the narrowed rows')
   })
 
+  test('a key pressed on the first level opens the second one and narrows the catalog to it', async (t) => {
+    await trigger(t.page).click()
+    await t.settle()
+    await t.page.keyboard.press('5')
+    await t.settle()
+    t.expectThat.visible(await t.read.box(t.surface('model.sub-card')), 'the key opened the second level')
+    const field = t.surface('model.search-field')
+    t.expectThat.equal(await t.page.locator(field).inputValue(), '5', 'the field holds the key')
+    t.expectThat.equal(await t.page.evaluate((selector) => document.activeElement === document.querySelector(selector), field), true, 'the field holds the focus')
+    const narrowed = await rows(t).allInnerTexts()
+    t.expectThat.equal(narrowed.length, 1, 'one row answers to the key')
+    t.expectThat.equal(narrowed[0].includes('GLM-5.3'), true, `the row is the one the key names (${JSON.stringify(narrowed)})`)
+  })
+
   test('a query no model answers to says so instead of listing the whole catalog', async (t) => {
     await openSecondLevel(t)
     await search(t, 'nothing-answers-to-this')
@@ -117,5 +131,26 @@ export default spec({ page: 'effort' }, ({ test }) => {
     t.expectThat.visible(field, 'the search field is drawn at the top of the card')
     t.expectThat.boxWithin(field, card, 'the field stands inside the card')
     t.expectThat.equal(field.top < (await t.read.box(t.surface('model.sub-row'))).top, true, 'the field stands above the rows')
+  })
+
+  test('with every provider on the first level, no More-models row is drawn and a key still opens the search', async (t) => {
+    // The chosen provider joins the official one on the first level, so no
+    // provider is left behind it: the row that leads there has nothing to
+    // carry and goes away. The search field is reached by typing instead.
+    await t.prefs({ quickProviders: ['zai'] })
+    await trigger(t.page).click()
+    await t.settle()
+    const firstLevel = await t.page.locator(t.surface('model.row')).allInnerTexts()
+    t.expectThat.equal(firstLevel.length, 3, `the first level lists every provider (${JSON.stringify(firstLevel)})`)
+    t.expectThat.equal(await t.page.getByRole('menuitem', { name: 'More models' }).count(), 0, 'no More-models row is drawn')
+    await t.page.keyboard.type('glm')
+    await t.settle()
+    t.expectThat.visible(await t.read.box(t.surface('model.sub-card')), 'a key typed on the first level opens the second one')
+    t.expectThat.equal(await t.page.locator(t.surface('model.search-field')).inputValue(), 'glm', 'the field holds the key that opened the card')
+    await t.page.click(t.surface('model.search-clear'))
+    await t.page.waitForFunction((selector) => document.querySelectorAll(selector).length > 1, t.surface('model.sub-row'), { timeout: 4000 })
+    await t.settle()
+    const secondLevel = await t.page.locator(t.surface('model.sub-row')).allInnerTexts()
+    t.expectThat.equal(secondLevel.length, 3, `with the query cleared the card lists the whole catalog (${JSON.stringify(secondLevel)})`)
   })
 })

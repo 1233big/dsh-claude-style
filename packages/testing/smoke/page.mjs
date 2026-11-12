@@ -9,6 +9,8 @@ import fs from 'fs'
 import path from 'path'
 import { MARKUP, PNG_1PX } from './shared.mjs'
 import { MODEL_SEAT_NAME } from '../specs/fixtures/model-seat.mjs'
+
+const SURFACE = JSON.parse(fs.readFileSync(new URL('../data/surface.json', import.meta.url), 'utf8')).surface
 /**
  * The rail ui-attachment draws a draft's files into, and its scrolling row: the
  * local names the host's stylesheet gives them. No part of the host's tables
@@ -71,18 +73,20 @@ const PROBE_PARTS = [
   'shell-switches.js',
   'agent-turn-nav.js',
   'shell-palette.js',
+  'settings-ongoing.js',
   'brand.js',
   'mascot.js',
   'chat-follow.js',
+  'chat-anchor.js',
   'chat-caret.js',
   'chat-fold.js',
   'chat-reveal.js',
   'chat-files.js',
   'chat-send.js',
   'chat-wait.js',
-  'dock-cards.js',
   'sidebar-layout.js',
   'model-meter.js',
+  'model-account.js',
   'peer.js',
   'teardown.js',
 ]
@@ -98,17 +102,24 @@ const STAND_IN = readParts('stand-in', STAND_IN_PARTS)
 const PROBE = readParts('probe', PROBE_PARTS)
 /**
  * The probe's own prelude alone: the skin applied and the readers a step uses,
- * with no step of the smoke's. The behaviour layer drives such a page from
- * outside, through Playwright (packages/testing/behaviour.mjs, D77).
+ * with no step of the smoke's. The stand-in lane drives such a page from outside
+ * through Playwright (packages/testing/stand-in.mjs, D92).
  */
 const PRELUDE = readParts('probe', ['prelude.js'])
+
+/**
+ * The page a behaviour spec drives: the same stand-in host and bundle with the
+ * probe's prelude alone, so the spec reads the skin's own report and then drives
+ * the page from outside through Playwright (packages/testing/behaviour.mjs, D92).
+ */
+const behaviourPage = (name) => page(name, 'full', [name], PRELUDE)
 
 /**
  * The stand-in page for one load: host footer, host composer, then the bundle,
  * then `probe` — the smoke's steps unless the caller drives the page itself.
  */
 function page(name, tier, cases, probe = PROBE) {
-  // The desktop footer mirrors 0.1.7's: the account menu lives in the
+  // The desktop footer mirrors the host's: the account menu lives in the
   // `settings.launcher` slot inside the host's `triggerRow`, and the settings
   // button the web-style footer has is gone. Every other case keeps the
   // web-style footer unchanged.
@@ -139,7 +150,9 @@ function page(name, tier, cases, probe = PROBE) {
             // AccountMenu), read off a live desktop instance.
             '<button id="host-account" data-signed-out="false" aria-label="Account menu" aria-haspopup="menu" aria-expanded="false">Ada</button>' +
           '</span></div></div>' +
-          '<button aria-label="Retry update">Retry update</button>' +
+          // The host's DesktopUpdateIndicator: a button beside the account row
+          // that carries `aria-disabled` on every phase (false while it waits).
+          '<button aria-label="Retry update" aria-disabled="false">Retry update</button>' +
         '</div></div></div>' +
       '</div>'
     : '<div class="_footArea_x_1">\n' +
@@ -205,6 +218,9 @@ function page(name, tier, cases, probe = PROBE) {
   var hostControls = '<style>' +
       'body { --dsw-alias-label-primary-foreground: #ffffff; }' +
       'body[data-ds-dark-theme] { --dsw-alias-label-primary-foreground: #0f1115; }' +
+      // InputBar reserves one statistics row plus its top pad even when the skin
+      // hides the host's figures (features/composer/inline-bar.css).
+      '._dock_x_1 { min-height: 22px; padding-top: 4px; }' +
       // The plugin's own strip: absolutely positioned in the dock's band, its
       // height fixed, as dsh-pocket's own sheet pins it.
       '._mobileStats_q_1 { position: absolute; left: 0; right: 0; bottom: 0; height: 28px;' +
@@ -239,6 +255,28 @@ function page(name, tier, cases, probe = PROBE) {
       '<div data-step-process><div data-step-process-body><div data-step-process-content style="height:400px">capped</div></div></div>' +
       '<div data-step-process data-group-expanded-mode="detailed"><div data-step-process-body><div data-step-process-content style="height:400px">expanded</div></div></div>'
     : ''
+  // The chat area the chat-anchor case drives: one conversation with a turn's
+  // process, the answer its process closes on, and the live turn's row, in the
+  // host's own scroller and column shapes.
+  var anchorArea = name === 'chat-anchor'
+    ? '<style>#anchorScroller { height: 240px; overflow-y: auto; }</style>' +
+      '<div id="anchorFrame"><div id="anchorScroller" data-conversation-scroll><div id="anchorFollowing"><div id="anchorColumn" data-chat-flow>' +
+        '<div data-chat-flow-key="process" data-chat-flow-kind="turn-process" style="height:600px">process</div>' +
+        '<div id="anchorAnswer" data-chat-flow-key="answer" data-chat-flow-kind="assistant-step" data-chat-group-part="response" style="height:600px">answer</div>' +
+        '<div data-chat-running style="height:40px">running</div>' +
+      '</div></div></div></div>'
+    : ''
+  // The host's window on an open process group: the min(400px, 50vh) cap, the
+  // group's own scrollbar and the gutter kept for that scrollbar where the host
+  // caps a group, and no height at all in the tier that lifts the cap. The
+  // column card keeps that window (features/process-column/process-column.css),
+  // so the case reading the card needs the host's rule standing on the page.
+  var processWindow = name === 'composer'
+    ? '<style>' +
+        '[data-step-process-body] { max-height: min(400px, 50vh); overflow-y: auto; scrollbar-gutter: stable; }' +
+        '[data-step-process][data-group-expanded-mode] [data-step-process-body] { max-height: none; overflow: visible; scrollbar-gutter: auto; }' +
+      '</style>'
+    : ''
   // The conversation header the session-title spec presses: the host's own
   // title row carrying a breadcrumb of one parent segment that opens its own
   // session and the segment of the session the header shows. The skin reads the
@@ -259,28 +297,6 @@ function page(name, tier, cases, probe = PROBE) {
   // question card's answer box has.
   var caretArea = name === 'caret'
     ? '<div data-composer-seat><textarea id="debugAnswer" rows="3">hello world</textarea></div>'
-    : ''
-  // The right sidebar the dock-cards case drives: the column's own empty host,
-  // one docked pane and a split of two columns, each with the host's own
-  // divider line under it. The panes carry no styling of their own, so what the
-  // case reads is what the skin's card rules add and what the flush choice
-  // leaves; the elevation token is the host's, as it is on the real page.
-  var dockArea = name === 'dock-cards'
-    ? '<style>' +
-        '._rightbarCol_r_1 { width: 320px; }' +
-        'body { --dsw-elevation-prominent: 0 0 0 .5px rgba(0, 0, 0, .16), 0 3px 8px rgba(0, 0, 0, .06); }' +
-        '._divider_r_1 { position: relative; height: 8px; }' +
-        '._divider_r_1::before { content: ""; position: absolute; inset: 0; background: rgb(0, 0, 255); }' +
-      '</style>' +
-      '<div class="_rightbarCol_r_1" data-rightbar-col>' +
-        '<div data-dockkit-empty id="debugDockEmpty">empty host</div>' +
-        '<div data-dockkit-host="dock"><div data-dockkit-pane id="debugDockPane">docked pane</div></div>' +
-        '<div data-dockkit-split>' +
-          '<div data-dockkit-column="0" data-dockkit-host="dock"><div data-dockkit-pane id="debugSplitLeft">left pane</div></div>' +
-          '<div data-dockkit-column="1" data-dockkit-host="dock"><div data-dockkit-pane id="debugSplitRight">right pane</div></div>' +
-          '<div class="_divider_r_1"></div>' +
-        '</div>' +
-      '</div>'
     : ''
   // The fold case drives the two surfaces the ported folding acts on: a thinking
   // row (opened and folded back by its own control) and process groups — one
@@ -464,8 +480,8 @@ function page(name, tier, cases, probe = PROBE) {
   // The context meter's own ring stands after that seat
   // (features/context-stats/meter-ring.ts), so the cases that read that row
   // carry the slot too.
-  var modelSeat = name === 'effort' || name === 'context-stats' || name === 'stats-compact' || name === 'stats-inline'
-    ? '<div data-slot="conversation.input.model" style="display:contents"><div class="_root_m_1"><button type="button" class="_trigger_m_1">' + MODEL_SEAT_NAME + '</button></div></div>'
+  var modelSeat = name === 'model-meter' || name === 'model-account' || name === 'effort' || name === 'context-stats' || name === 'stats-compact' || name === 'stats-inline'
+    ? '<div data-slot="conversation.input.model" style="display:contents"><div class="_root_m_1" style="position:relative;display:inline-flex"><button type="button" class="_trigger_m_1">' + MODEL_SEAT_NAME + '</button></div></div>'
     : ''
   // The hint the host's editor draws on an empty draft, inside the grow wrapper
   // beside the field, which is where the host renders it; and the rail
@@ -509,6 +525,7 @@ function page(name, tier, cases, probe = PROBE) {
 ${boot}
 ${skinOwner}
 ${motionStub}
+${processWindow}
 ${sidebarStyle}
 <div data-slot="root">
 <div data-slot="sidebar">
@@ -520,6 +537,7 @@ ${footer}
   </div>
 </div>
 ${chatArea}
+${anchorArea}
 <!-- The host keeps the composer inside its conversation scroller (the conversation's parts are marked within it, packages/engine/src/parts-table.ts), and the scroller's box reaches above the card: the transcript stands there. The stand-in has no transcript, so the padding stands for the room it takes. Without it the scroller's overflow clips the crab perched on the card's top edge, and a real press cannot reach it. -->
 <div data-conversation-scroll style="padding-top: 80px">
 <div class="_composerStack_h_1">
@@ -537,7 +555,7 @@ ${heroRow}
       <button class="_add_x_1" aria-label="Add files or run commands" aria-haspopup="listbox" id="commands"><svg viewBox="0 0 16 16" width="14" height="14"><path d="M8 2v12M2 8h12"/></svg></button>
       <div class="_modes_x_1"><div data-slot="conversation.input.permission" style="display:contents"><button aria-label="Access mode, current: Edit">Edit</button></div></div>
     </div>
-    <div class="_trailing_x_1">${modelSeat}<button class="_primary_x_1" aria-label="Send message" id="send"><svg viewBox="0 0 16 16" width="16" height="16"><path d="M8 1v14"/></svg></button></div>
+    <div class="_trailing_x_1">${modelSeat}<div class="_activity_x_1"><div data-slot="conversation.input.activity" style="display:contents"></div></div><button class="_primary_x_1" aria-label="Send message" id="send"><svg viewBox="0 0 16 16" width="16" height="16"><path d="M8 1v14"/></svg></button></div>
   </div>
 </div>
 ${dock}
@@ -548,14 +566,13 @@ ${hostControls}
 ${caretArea}
 ${sessionTitleArea}
 ${chatSubmit}
-${dockArea}
 ${foldArea}
 </div>
-<script>window.SMOKE_CASE = ${JSON.stringify(name)}; window.SMOKE_GROUPS = ${JSON.stringify(cases)}; window.SMOKE_TIER = ${JSON.stringify(tier)}; window.SMOKE_MARKUP = ${JSON.stringify(MARKUP)}; window.SMOKE_PNG = ${JSON.stringify(PNG_1PX)}</script>
+<script>window.SMOKE_CASE = ${JSON.stringify(name)}; window.SMOKE_GROUPS = ${JSON.stringify(cases)}; window.SMOKE_TIER = ${JSON.stringify(tier)}; window.SMOKE_MARKUP = ${JSON.stringify(MARKUP)}; window.SMOKE_PNG = ${JSON.stringify(PNG_1PX)}; window.SMOKE_SURFACE = ${JSON.stringify(SURFACE)}</script>
 <script>${STAND_IN}</script>
 <script src="/client.js"></script>
 <script>${probe}</script>
 </body></html>`
 }
 
-export { page, PRELUDE }
+export { page, behaviourPage, PRELUDE }

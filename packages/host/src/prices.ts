@@ -2,16 +2,14 @@
  * The price snapshot the host holds: the copy shipped in the package, the copy
  * refreshed from the repository, and which of the two is newer.
  *
- * The repository owns the scraping (`scripts/fetch-prices.mjs`, run by
- * `.github/workflows/data.yml`); a host only downloads the validated result,
- * once a day, and keeps it on disk. The packaged copy is what a machine with no
- * reach judges by, so the meter works on a first run with no network at all.
+ * The repository owns the scraping (`scripts/data/fetch-prices.mjs`, run by
+ * `.github/workflows/data.yml`); a host only downloads the validated result, once
+ * a day, and keeps it on disk. The packaged copy is what a machine with no reach
+ * judges by, so the meter works on a first run with no network at all.
  *
  * The refresh follows `peakrate.ts`: a timer that starts with the first reader,
- * stands down when nobody has asked for two days, and keeps the current
- * document whenever the fetch or the parse fails. Compared with parsing the
- * official page here, this moves the fragile half into CI, where a break is one
- * red run instead of every install.
+ * stands down when nobody has asked for two days, and keeps the current document
+ * whenever the fetch or the parse fails.
  */
 import { PACKAGE_NAME } from '@dsh-claude-style/contracts/package'
 import { statSync } from 'node:fs'
@@ -75,6 +73,8 @@ export function createPrices(ctx: DshContext): PriceStore {
   let loaded = false
   let timer: ReturnType<typeof setInterval> | undefined
   let inFlight: AbortController | null = null
+  /** Set by dispose: a source answer that lands afterwards must not write the cache. */
+  let disposed = false
   let lastAskedAt = 0
   const listeners = new Set<() => void>()
   const warn = (message: string) => ctx.logger?.warn?.(message)
@@ -140,6 +140,9 @@ export function createPrices(ctx: DshContext): PriceStore {
   async function refresh(): Promise<boolean> {
     let next: PriceDocument | null = null
     for (const url of PRICES_URLS) {
+      // Disposed while the previous source was being asked: nothing below runs
+      // on behalf of a plugin that is gone.
+      if (disposed) return false
       try {
         next = await fetchOne(url)
       } catch (error) {
@@ -153,6 +156,8 @@ export function createPrices(ctx: DshContext): PriceStore {
       warn(`${PACKAGE_NAME}: no price source answered a document this build understands; keeping the current one`)
       return false
     }
+    // A disposal during the fetch must not leave this answer in the cache.
+    if (disposed) return false
     document = next
     origin = 'remote'
     fetchedAt = Date.now()
@@ -202,6 +207,7 @@ export function createPrices(ctx: DshContext): PriceStore {
       return () => listeners.delete(listener)
     },
     dispose() {
+      disposed = true
       stopTimer()
       listeners.clear()
       if (inFlight !== null) {

@@ -1,36 +1,33 @@
 /**
- * The cost-meter plugin's ledger: the cheapest source of cross-session usage.
+ * The cost-meter plugin's ledger: the cheapest source of cross-session usage, at
+ * `$DSH_HOME/storages/cost-meter/ledger.json`, and read ONLY.
  *
- * `$DSH_HOME/storages/cost-meter/ledger.json` is another plugin's document and is
- * read ONLY. Its `days` map is already a per-day token roll-up, and each day's
- * `byProviderModel` splits it by `<provider>:<model>` — so when it exists and
- * covers the newest session activity there is nothing left to compute. It also
- * outlives the logs: a deleted session's tokens stay in it. It has no hour
- * dimension, so the fold still runs behind a ledger answer for the hour
- * histograms alone. The file is never written: its owner rebuilds the whole
- * document from a fixed field list and rewrites it under a cross-process lock, so
- * a foreign key would be dropped by their next flush, a write outside their lock
- * could lose theirs, and a version they do not recognise makes them quarantine
- * the file (`ledger.json.corrupt-<stamp>`) and start empty.
+ * Its `days` map is already a per-day token roll-up split by `<provider>:<model>`,
+ * and it outlives the logs, so a deleted session's tokens stay in it. A day it
+ * records can be only part of that day and it has no hour dimension, so the fold
+ * still runs behind a ledger answer.
+ *
+ * The file is never written: its owner rebuilds the whole document from a fixed
+ * field list under a cross-process lock, so a foreign key would be dropped by
+ * their next flush and a version they do not recognise makes them quarantine the
+ * file and start empty.
  *
  * The bucket shapes below are the ones the ledger, the cache and the fold all
- * speak: none of those documents ships types, so the members this reader touches
- * are declared here.
+ * speak; none of those documents ships types.
  */
+import { PACKAGE_NAME } from '@dsh-claude-style/contracts/package'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { sessionDirectoryName } from './session-name.js'
 
 /** The ledger's document version this reader understands; anything else is ignored. */
 const LEDGER_VERSION = 1
 
 /**
  * Whether a `days` key is a day this half can read: `YYYY-MM-DD` and a real
- * calendar day.
- *
- * The ledger is another plugin's document, so its keys are checked like its
- * values. A key that is not a day is dropped rather than kept: the merge
- * compares day keys as strings, and one sorting past every real day would take
- * the newest-day mark with it and hide the days the fold itself contributed.
+ * calendar day. A key that is not a day is dropped rather than kept: the merge
+ * compares day keys as strings, and one sorting past every real day would hide
+ * the days the fold itself contributed.
  */
 function isDayKey(value: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
@@ -84,23 +81,27 @@ export function addBuckets(target: Buckets, buckets: Partial<Buckets> | null | u
 
 /**
  * The ledger's day map, or null when it cannot answer: the cost meter is not
- * installed, its file is mid-write, or its version is not the one read here.
+ * installed, its file is mid-write, or its version is not the one read here. The
+ * local fold is an account of the same days on its own, so one plugin's file
+ * cannot fail the pass.
  *
  * @param home - the harness home, resolved by the caller through the shared
  *   accessor.
+ * @param logger - receives the warning a tolerated read failure leaves.
  */
-export function readLedger(home: string): Map<string, DayBuckets> | null {
+export function readLedger(home: string, logger?: { warn?(message: string): void }): Map<string, DayBuckets> | null {
   // The cost meter is another plugin: no ledger means it is not installed.
   const file = join(home, 'storages', 'cost-meter', 'ledger.json')
   if (!existsSync(file)) return null
-  const raw = readFileSync(file, 'utf8')
   let parsed: unknown
   try {
-    parsed = JSON.parse(raw)
-  } catch {
-    // Another plugin's file, read without any coordination with its writer:
-    // a write in progress reads as no ledger, and the local fold answers
-    // (D12).
+    // Another plugin's file, read without any coordination with its writer: a
+    // write in progress reads as no ledger, and the local fold answers alone
+    // (D12). On Windows a writer holding the file makes the read itself throw,
+    // which is the same answer.
+    parsed = JSON.parse(readFileSync(file, 'utf8'))
+  } catch (error) {
+    logger?.warn?.(`${PACKAGE_NAME}: cost-meter ledger unreadable, folding the session logs alone: ${(error as { message?: string }).message}`)
     return null
   }
   if (parsed === null || typeof parsed !== 'object') return null
@@ -122,10 +123,13 @@ export function readLedger(home: string): Map<string, DayBuckets> | null {
       calls: bucket.calls,
     }, 1)
     // The ledger keeps one record per session per day; the ids are what make
-    // the total session count a union rather than a sum.
+    // the total session count a union rather than a sum. Its id is the host's
+    // logical session id while the record keys a session by the directory name
+    // it is stored under, so it is spelled that way here: one session is one id
+    // in both accounts.
     clean.sessionIds = Array.isArray(bucket.sessions)
       ? (bucket.sessions as unknown[])
-        .map((entry) => (entry !== null && typeof entry === 'object' && typeof (entry as { id?: unknown }).id === 'string' ? (entry as { id: string }).id : null))
+        .map((entry) => (entry !== null && typeof entry === 'object' && typeof (entry as { id?: unknown }).id === 'string' ? sessionDirectoryName((entry as { id: string }).id) : null))
         .filter((id): id is string => id !== null)
       : []
     clean.sessions = clean.sessionIds.length

@@ -1,15 +1,10 @@
 /**
- * The preferences: one declaration each, shared by both halves (D73).
- *
- * Every fact about a preference lives here once — its key, its type, the values
- * it accepts, its shipped default, the limit a text or a list keeps to, and the
- * shapes (or names) an earlier build stored. `Prefs`, the value constants the
- * browser half reads, the page attributes' defaults and the host half's Config
- * are derived from this table, so a preference is added by one entry here plus
- * the feature that reads it (its settings row follows the same table, D72).
+ * Shared preference declarations (D73): values, defaults, limits and legacy shapes.
+ * Browser types and host Config derive from this table; settings rows follow it too (D72).
  */
 import { OFFICIAL_MODEL_GROUP } from './services'
 import { CURRENCIES, CURRENCY_CNY } from './prices'
+import { SOUND_LEVELS, SOUND_LEVEL_OFF } from './sound'
 
 /* ---------- the value vocabulary ---------- */
 
@@ -20,22 +15,13 @@ export const BILLING_CHOICES = [BILLING_OFF, ...CURRENCIES] as const
 
 /** Brand marks selectable from the settings page. `claude` is the default. */
 export const BRAND_CLAUDE = 'claude'
-/**
- * The DeepSeek brand: the host's own brand area stays (no Claude variant
- * matches) and takes DeepSeek's brand blue, both palettes turn blue
- * (theme/tokens.css), the skin's Claude marks give way to DeepSeek's whale,
- * and Deepy the pixel whale takes the crab's place on the composer.
- */
+/** DeepSeek branding keeps the host brand area and selects the DeepSeek palette and mascot. */
 export const BRAND_DEEPSEEK = 'deepseek'
-/** What earlier builds stored for the DeepSeek choice, when it was labelled "Off". */
+/** The stored `off` value that maps to the DeepSeek brand. */
 export const BRAND_DEEPSEEK_LEGACY = 'off'
 export const BRANDS = [BRAND_CLAUDE, BRAND_DEEPSEEK] as const
 
-/**
- * Which colours the page paints: one brand's own card, `brand` for whichever
- * brand the theme style chooses, or the reader's four. A card id stands on its
- * own, so the colour card and the brand mark are chosen apart.
- */
+/** Palette card choice; `brand` follows the selected brand and stays independent of its artwork. */
 export const PALETTE_COLORING_BRAND = 'brand'
 export const PALETTE_COLORING_CUSTOM = 'custom'
 export const PALETTE_COLORINGS = [PALETTE_COLORING_BRAND, ...BRANDS, PALETTE_COLORING_CUSTOM] as const
@@ -48,23 +34,13 @@ export const BRAND_INKS = [BRAND_INK_ORIGINAL, BRAND_INK_ACCENT, BRAND_INK_TEXT]
 /** Longest accepted brand name. */
 export const BRAND_NAME_MAX = 40
 
-/**
- * The animation choice: `system` follows the operating system's own
- * reduced-motion setting, `reduced` holds every animation still whatever the
- * system says, and `full` always plays them. The resolved answer rides <body>
- * as an attribute (`reduced` / `full`), so the mascots and the stylesheets read
- * one value instead of asking the system separately.
- */
+/** `system`, `reduced` or `full`; the resolved body attribute is shared by scripts and stylesheets. */
 export const MOTION_SYSTEM = 'system'
 export const MOTION_REDUCED = 'reduced'
 export const MOTION_FULL = 'full'
 export const MOTION_MODES = [MOTION_SYSTEM, MOTION_REDUCED, MOTION_FULL] as const
 
-/**
- * What the words on the waiting line wear while a turn runs: the highlight band
- * the host's own rows sweep (`sweep`, the default), or the colour wash
- * transitions.dev's "Pro gradient text" moves through the letters (`wash`).
- */
+/** Waiting-line treatment: host-like highlight sweep or gradient colour wash. */
 export const STATUS_MOTION_SWEEP = 'sweep'
 export const STATUS_MOTION_WASH = 'wash'
 export const STATUS_MOTIONS = [STATUS_MOTION_SWEEP, STATUS_MOTION_WASH] as const
@@ -79,50 +55,63 @@ export const CHAT_REVEAL_OFF = 'off'
 export const CHAT_REVEAL_ON = 'on'
 export const CHAT_REVEAL_MODES = [CHAT_REVEAL_ON, CHAT_REVEAL_OFF] as const
 
+/** How live reasoning reaches the reader: as it arrives, or through the two-line stepping window. */
+export const REASONING_DISPLAY_CONTINUOUS = 'continuous'
+export const REASONING_DISPLAY_STEPPED = 'stepped'
+export const REASONING_DISPLAYS = [REASONING_DISPLAY_CONTINUOUS, REASONING_DISPLAY_STEPPED] as const
+
 /** How a message the reader sends arrives: a stand-in flying up from the composer, or the row growing in place. */
 export const MESSAGE_ENTER_FLIGHT = 'flight'
 export const MESSAGE_ENTER_GROW = 'grow'
 export const MESSAGE_ENTER_MODES = [MESSAGE_ENTER_FLIGHT, MESSAGE_ENTER_GROW] as const
 
+/** How an open process group lays out its rows: the host's own list, or one bordered card of single-line rows. */
+export const PROCESS_ROWS_FLAT = 'flat'
+export const PROCESS_ROWS_COLUMN = 'column'
+export const PROCESS_ROWS_LAYOUTS = [PROCESS_ROWS_FLAT, PROCESS_ROWS_COLUMN] as const
+
 /** Who paints the colours: the skin's own palette, or the host's colour tokens left to the host and other theme plugins. */
 export const PALETTE_CLAUDE = 'claude'
 export const PALETTE_HOST = 'host'
 export const PALETTES = [PALETTE_CLAUDE, PALETTE_HOST] as const
-/** Who sets the type, under the same two answers. */
+/** Who sets the type: the skin's Claude faces, one system sans stack, or the host's own tokens. */
 export const TYPEFACE_CLAUDE = 'claude'
+export const TYPEFACE_SYSTEM = 'system'
 export const TYPEFACE_HOST = 'host'
-export const TYPEFACES = [TYPEFACE_CLAUDE, TYPEFACE_HOST] as const
+export const TYPEFACES = [TYPEFACE_CLAUDE, TYPEFACE_SYSTEM, TYPEFACE_HOST] as const
 
-/** The mascot on the composer, chosen apart from the brand: follow the brand, pick one, or show none. */
+/** The mascot on the composer, chosen apart from the brand: follow the brand, pick one of the three, or show none. */
 export const MASCOT_BRAND = 'brand'
 export const MASCOT_CRAB = 'crab'
 export const MASCOT_DEEPY = 'deepy'
+export const MASCOT_WHALEGIRL = 'whalegirl'
 export const MASCOT_OFF = 'off'
-export const MASCOTS = [MASCOT_BRAND, MASCOT_CRAB, MASCOT_DEEPY, MASCOT_OFF] as const
+export const MASCOTS = [MASCOT_BRAND, MASCOT_CRAB, MASCOT_DEEPY, MASCOT_WHALEGIRL, MASCOT_OFF] as const
 /** Where the mascot stands: the home page alone, or the home page and the conversation. */
 export const MASCOT_SCOPE_HOME = 'home'
 export const MASCOT_SCOPE_ALL = 'all'
 export const MASCOT_SCOPES = [MASCOT_SCOPE_HOME, MASCOT_SCOPE_ALL] as const
 
-/** Where the skin's search box stands, and how much of the host's own sidebar search it leaves in place. */
+/** Whether the skin draws its own sidebar search button or leaves the host's own button in place. */
 export const SEARCH_STYLE_ICON = 'icon'
-export const SEARCH_STYLE_OVERLAY = 'overlay'
 export const SEARCH_STYLE_STANDALONE = 'standalone'
-export const SEARCH_STYLES = [SEARCH_STYLE_ICON, SEARCH_STYLE_OVERLAY, SEARCH_STYLE_STANDALONE] as const
+export const SEARCH_STYLES = [SEARCH_STYLE_ICON, SEARCH_STYLE_STANDALONE] as const
 
 /** How much air the sidebar keeps around its own rows. */
 export const SIDEBAR_LAYOUT_RELAXED = 'relaxed'
 export const SIDEBAR_LAYOUT_COMPACT = 'compact'
 export const SIDEBAR_LAYOUTS = [SIDEBAR_LAYOUT_RELAXED, SIDEBAR_LAYOUT_COMPACT] as const
 
-/**
- * The mark a conversation still running carries in the sidebar: a light
- * breathing in place over the idle seat's hollow circle, or the ring turning
- * that the skin drew before the light.
- */
+/** Independent running styles: breathing marker, turning ring, or title shimmer. */
 export const ONGOING_INDICATOR_BREATHE = 'breathe'
 export const ONGOING_INDICATOR_RING = 'ring'
-export const ONGOING_INDICATORS = [ONGOING_INDICATOR_BREATHE, ONGOING_INDICATOR_RING] as const
+export const ONGOING_INDICATOR_SHIMMER = 'shimmer'
+export const ONGOING_INDICATORS = [ONGOING_INDICATOR_BREATHE, ONGOING_INDICATOR_RING, ONGOING_INDICATOR_SHIMMER] as const
+
+/** Leading uses the host slot shared with third-party marks; trailing uses the skin status column. */
+export const ONGOING_SIDE_LEFT = 'left'
+export const ONGOING_SIDE_RIGHT = 'right'
+export const ONGOING_SIDES = [ONGOING_SIDE_LEFT, ONGOING_SIDE_RIGHT] as const
 
 /** The chat area's animation switch: on plays the ported set (features/chat-*), off leaves the area to the host. */
 export const CHAT_ANIMATIONS_OFF = 'off'
@@ -134,11 +123,7 @@ export const STATS_POSITION_FOOTER = 'footer'
 export const STATS_POSITIONS = [STATS_POSITION_INLINE, STATS_POSITION_CONTEXT, STATS_POSITION_FOOTER] as const
 export const STATS_FOOTER_ALIGNS = ['left', 'center', 'right'] as const
 
-/**
- * How the composer draws the context meter's reading: the pie the skin has
- * painted, dsh's own thin ring on the continuous green-to-red band, or the
- * heavier ring measured from the reference image on three bands.
- */
+/** Context meter face: pie, continuous-band ring or three-band ring. */
 export const CONTEXT_DISPLAY_PIE = 'pie'
 export const CONTEXT_DISPLAY_RING_RAMP = 'ring-ramp'
 export const CONTEXT_DISPLAY_RING_BAND = 'ring-band'
@@ -156,21 +141,17 @@ export const COMPOSER_GAP_THEME = 'theme'
 export const COMPOSER_GAP_ROOMY = 'roomy'
 export const COMPOSER_GAPS = [COMPOSER_GAP_COMPACT, COMPOSER_GAP_THEME, COMPOSER_GAP_ROOMY] as const
 
-/**
- * The language the account-hold easter egg (features/ban-screen/) is written
- * in, or `off` for none. It is its own preference rather than "follow the
- * shell", because the page reproduces a real Claude screen: the point is to
- * read it in the language Claude actually used.
- */
+/** Account-hold screen language; independent of shell locale to reproduce Claude's original screen. */
 export const BAN_LOCALE_EN = 'en'
 export const BAN_LOCALE_ZH = 'zh'
 export const BAN_LOCALE_OFF = 'off'
 export const BAN_LOCALES = [BAN_LOCALE_EN, BAN_LOCALE_ZH, BAN_LOCALE_OFF] as const
 
-/** Home-page layouts. `classic` is the centered hero; `studio` is the dashboard form, Claude Code's own home. */
+/** `off` keeps the host home; `classic` is a centered hero and `studio` a dashboard. */
+export const HOME_LAYOUT_OFF = 'off'
 export const HOME_LAYOUT_CLASSIC = 'classic'
 export const HOME_LAYOUT_STUDIO = 'studio'
-export const HOME_LAYOUTS = [HOME_LAYOUT_CLASSIC, HOME_LAYOUT_STUDIO] as const
+export const HOME_LAYOUTS = [HOME_LAYOUT_OFF, HOME_LAYOUT_CLASSIC, HOME_LAYOUT_STUDIO] as const
 
 /** Composer surfaces the restyle may cover, in settings order. */
 export const COMPOSER_SCOPE_OFF = 'off'
@@ -185,24 +166,23 @@ export const AUTO_POPOVER_ACCOUNT = 'account'
 export const AUTO_POPOVER_ALL = 'all'
 export const AUTO_POPOVER_SCOPES = [AUTO_POPOVER_OFF, AUTO_POPOVER_ACCOUNT, AUTO_POPOVER_ALL] as const
 
-/**
- * How large the page is drawn: `system` leaves it at the size the system gives
- * it, and every other value scales the whole page by that factor (the stylesheet
- * writes it as a `zoom`, so the page lays out in a smaller space and every
- * control, line and picture grows with it).
- */
-export const PAGE_ZOOM_SYSTEM = 'system'
-export const PAGE_ZOOM_08 = '0.8'
-export const PAGE_ZOOM_1 = '1'
-export const PAGE_ZOOM_125 = '1.25'
-export const PAGE_ZOOM_15 = '1.5'
-export const PAGE_ZOOMS = [PAGE_ZOOM_SYSTEM, PAGE_ZOOM_08, PAGE_ZOOM_1, PAGE_ZOOM_125, PAGE_ZOOM_15] as const
+/** Page zoom percentage; empty follows the system, and values outside the declared bounds clamp to an endpoint. */
+export const PAGE_ZOOM_SYSTEM = ''
+export const PAGE_ZOOM_DEFAULT = '100'
+export const PAGE_ZOOM_MIN = 60
+export const PAGE_ZOOM_MAX = 200
 
-/**
- * The sodium rewrite (D78): `undecided` until the reader or the first probe that
- * finds a listed rule decides it, and drawn as off until then. The settings
- * switch writes `on` or `off`, and the probe acts on `undecided` alone.
- */
+/** Ordinary interface text as a percentage of its own size, independent of page zoom. */
+export const INTERFACE_FONT_SIZE_DEFAULT = '100'
+export const INTERFACE_FONT_SIZE_MIN = 80
+export const INTERFACE_FONT_SIZE_MAX = 160
+
+/** Background fill opacity as a percentage; 100 keeps the existing canvas opaque. */
+export const BACKGROUND_OPACITY_DEFAULT = '100'
+export const BACKGROUND_OPACITY_MIN = 0
+export const BACKGROUND_OPACITY_MAX = 100
+
+/** Sodium starts `undecided` and appears off; only the reader or first matching probe decides it (D78). */
 export const SODIUM_ON = 'on'
 export const SODIUM_OFF = 'off'
 export const SODIUM_UNDECIDED = 'undecided'
@@ -213,15 +193,22 @@ export const USERNAME_MAX = 64
 /** Most quick-provider ids kept, and the longest id accepted. */
 export const QUICK_PROVIDERS_MAX = 64
 export const PROVIDER_ID_MAX = 128
+/** Hidden-panel limits; Plugins is host-pinned and must never be stored as hidden. */
+export const SIDEBAR_HIDDEN_MAX = 32
+export const PANEL_ID_MAX = 128
+export const PLUGINS_PANEL_ID = 'plugins'
+/** Bounds for profile-persisted manual reminders; session ids remain opaque. */
+export const MANUAL_UNREAD_LIMIT = 2048
+export const MANUAL_UNREAD_ID_LIMIT = 1024
+/** Custom-price storage limits; decimal text avoids losing entered digits to floats. */
+export const PRICE_ROWS_MAX = 32
+export const PRICE_ROW_MODEL_MAX = 96
+export const PRICE_ROW_RATE_MAX = 16
 
 /* ---------- the table ---------- */
 
 interface PrefSpecBase {
-  /**
-   * The shapes (or names) an earlier build stored, by the value as written:
-   * each maps onto what it means under this declaration. A stored value that is
-   * neither here nor acceptable under the declaration reads as the default.
-   */
+  /** Legacy stored values mapped to current meanings; unknown values fall back to the default. */
   readonly legacy?: Readonly<Record<string, unknown>>
 }
 
@@ -235,15 +222,15 @@ interface ListSpec extends PrefSpecBase { readonly type: 'list', readonly defaul
 export type PrefSpec = BooleanSpec | ChoiceSpec | TextSpec | ColorSpec | ListSpec
 
 /**
- * One declaration per preference (D73). A `choice`'s values are the set a stored
- * value is held to; a `legacy` entry is a shape an earlier build wrote. The host
- * half's form carries the keys and the defaults and stays permissive about the
- * shapes, so an old value never keeps the package from starting.
+ * Preference declarations (D73). The host form stays permissive about stored shapes;
+ * clamping here keeps legacy or invalid values from preventing startup.
  */
 export const PREFS = {
   brand: { type: 'choice', values: BRANDS, default: BRAND_CLAUDE, legacy: { [BRAND_DEEPSEEK_LEGACY]: BRAND_DEEPSEEK } },
   brandName: { type: 'text', default: '', max: BRAND_NAME_MAX },
   brandInk: { type: 'choice', values: BRAND_INKS, default: BRAND_INK_ORIGINAL },
+  /** Whether the sidebar draws its brand area; off collapses that area and leaves the sidebar toggle in place. */
+  sidebarBrand: { type: 'boolean', default: true },
   brandAccent: { type: 'color', default: '' },
   /** One brand's card, `brand` to follow the theme style, or the reader's four. */
   paletteColors: { type: 'choice', values: PALETTE_COLORINGS, default: PALETTE_COLORING_BRAND },
@@ -254,31 +241,39 @@ export const PREFS = {
   customCode: { type: 'color', default: '' },
   motion: { type: 'choice', values: MOTION_MODES, default: MOTION_SYSTEM },
   statusMotion: { type: 'choice', values: STATUS_MOTIONS, default: STATUS_MOTION_SWEEP },
-  /** An earlier build stored the two words; `precise` is what the switch being on means. */
+  /** The two legacy words: `precise` is on and `simple` off. */
   statusDetail: { type: 'boolean', default: true, legacy: { precise: true, simple: false } },
   collapseFooter: { type: 'boolean', default: true },
-  /** It was a boolean before it grew its choices. */
+  /** A legacy boolean maps to every popover or none. */
   autoPopover: { type: 'choice', values: AUTO_POPOVER_SCOPES, default: AUTO_POPOVER_ALL, legacy: { true: AUTO_POPOVER_ALL, false: AUTO_POPOVER_OFF } },
   composerScope: { type: 'choice', values: COMPOSER_SCOPES, default: COMPOSER_SCOPE_ALL },
+  /** Whether the host's question card is redrawn and moved to the end of the conversation; off leaves it in the composer as the host draws it. */
+  questionCard: { type: 'boolean', default: true },
   modelPicker: { type: 'boolean', default: true },
+  /** Off restores the host model seat so third-party effort controls remain reachable. */
+  effortSlider: { type: 'boolean', default: true },
   modelDescriptions: { type: 'boolean', default: true },
   /** Whether the reasoning-effort trigger takes its colour from the rung in force (features/effort/effort-picker.css). */
   effortAccent: { type: 'boolean', default: true },
   peakrate: { type: 'boolean', default: true },
-  /**
-   * The provider ids the picker's first level carries: ids rather than names,
-   * so a catalog rename does not lose the stored selection. The official
-   * service is the picker's default rather than a choice, so a stored id for it
-   * is dropped.
-   */
+  /** Store provider ids across catalog renames; the official default is excluded from this list. */
   quickProviders: { type: 'list', default: [], max: QUICK_PROVIDERS_MAX, entryMax: PROVIDER_ID_MAX, drop: [OFFICIAL_MODEL_GROUP] },
   username: { type: 'text', default: '', max: USERNAME_MAX },
-  pageZoom: { type: 'choice', values: PAGE_ZOOMS, default: PAGE_ZOOM_SYSTEM },
+  /** The page's scale as a percentage of its own size, between PAGE_ZOOM_MIN and PAGE_ZOOM_MAX; the empty string is "follow the system". */
+  pageZoom: {
+    type: 'text',
+    default: PAGE_ZOOM_DEFAULT,
+    max: 8,
+    legacy: { system: '', '0.8': '80', '1': '100', '1.25': '125', '1.5': '150' },
+  },
+  interfaceFontSize: { type: 'text', default: INTERFACE_FONT_SIZE_DEFAULT, max: 8 },
   sodium: { type: 'choice', values: SODIUM_MODES, default: SODIUM_UNDECIDED },
   banLocale: { type: 'choice', values: BAN_LOCALES, default: BAN_LOCALE_EN },
   homeLayout: { type: 'choice', values: HOME_LAYOUTS, default: HOME_LAYOUT_STUDIO },
   homeRipple: { type: 'boolean', default: false },
   palette: { type: 'choice', values: PALETTES, default: PALETTE_CLAUDE },
+  /** The background fill's opacity as a percentage, between BACKGROUND_OPACITY_MIN and BACKGROUND_OPACITY_MAX. */
+  backgroundOpacity: { type: 'text', default: BACKGROUND_OPACITY_DEFAULT, max: 3 },
   typeface: { type: 'choice', values: TYPEFACES, default: TYPEFACE_CLAUDE },
   conversationWidth: { type: 'choice', values: CONVERSATION_WIDTHS, default: CONVERSATION_WIDTH_FULL },
   composerBottomGap: { type: 'choice', values: COMPOSER_GAPS, default: COMPOSER_GAP_THEME },
@@ -294,24 +289,43 @@ export const PREFS = {
   statsFooterAlign: { type: 'choice', values: STATS_FOOTER_ALIGNS, default: 'center' },
   /** Which official price table the session's cost follows, or off for no figure at all. */
   billingCurrency: { type: 'choice', values: BILLING_CHOICES, default: CURRENCY_CNY },
+  /** Custom `model|input|cacheRead|output` rows per million tokens; blank buckets inherit official rates. */
+  billingTable: { type: 'list', default: [], max: PRICE_ROWS_MAX, entryMax: 256, drop: [] },
   workspaceView: { type: 'boolean', default: true },
-  dockCards: { type: 'boolean', default: true },
   sidebarSearch: { type: 'boolean', default: true },
-  searchStyle: { type: 'choice', values: SEARCH_STYLES, default: SEARCH_STYLE_OVERLAY },
+  searchStyle: { type: 'choice', values: SEARCH_STYLES, default: SEARCH_STYLE_STANDALONE, legacy: { overlay: SEARCH_STYLE_STANDALONE } },
   /** Whether resting the pointer on the collapsed sidebar's toggle opens the sidebar over the page. */
   sidebarPeek: { type: 'boolean', default: true },
+  /** Whether the panel list carries the More menu's hidden entries and its Edit sidebar dialog. */
+  sidebarEntries: { type: 'boolean', default: true },
+  /** The panel ids that dialog took off the list; they stay reachable from More. */
+  sidebarHidden: { type: 'list', default: [], max: SIDEBAR_HIDDEN_MAX, entryMax: PANEL_ID_MAX, drop: [PLUGINS_PANEL_ID] },
   sidebarLayout: { type: 'choice', values: SIDEBAR_LAYOUTS, default: SIDEBAR_LAYOUT_RELAXED },
   ongoingIndicator: { type: 'choice', values: ONGOING_INDICATORS, default: ONGOING_INDICATOR_BREATHE },
+  /** Leading uses the host slot; trailing leaves that slot available for third-party marks. */
+  ongoingIndicatorSide: { type: 'choice', values: ONGOING_SIDES, default: ONGOING_SIDE_LEFT },
+  /** Explicit reminders stay separate from the host's completion-unread state. */
+  manualUnreadIds: { type: 'list', default: [], max: MANUAL_UNREAD_LIMIT, entryMax: MANUAL_UNREAD_ID_LIMIT, drop: [] },
   turnNav: { type: 'boolean', default: true },
+  /** Whether a message the reader sent carries edit and retract beside its copy button (features/message-actions). */
+  messageActions: { type: 'boolean', default: true },
   viewTabs: { type: 'boolean', default: true },
   headerBand: { type: 'boolean', default: true },
-  /** It held a choice before it became a switch again; every retired choice meant on bar `off`. */
+  /** Whether the conversation offers its own session details rail (D94). */
+  sessionPanel: { type: 'boolean', default: true },
+  /** The legacy choices all mean on except `off`. */
   chatAnimations: { type: 'boolean', default: true, legacy: { [CHAT_ANIMATIONS_OFF]: false, enhanced: true, redraw: true } },
   chatWait: { type: 'boolean', default: true },
   chatSend: { type: 'boolean', default: true },
   chatReveal: { type: 'choice', values: CHAT_REVEAL_MODES, default: CHAT_REVEAL_OFF },
+  reasoningDisplay: { type: 'choice', values: REASONING_DISPLAYS, default: REASONING_DISPLAY_STEPPED },
+  /** Moves the reading position when an answer starts; default off because this is unsolicited movement. */
+  answerAnchor: { type: 'boolean', default: false },
   caretMotion: { type: 'choice', values: CARET_MOTIONS, default: CARET_MOTION_TYPING },
   messageEnter: { type: 'choice', values: MESSAGE_ENTER_MODES, default: MESSAGE_ENTER_FLIGHT },
+  processRows: { type: 'choice', values: PROCESS_ROWS_LAYOUTS, default: PROCESS_ROWS_FLAT },
+  /** Completion/blocked cue gain; default off to avoid unsolicited interruption (D89). */
+  soundCues: { type: 'choice', values: SOUND_LEVELS, default: SOUND_LEVEL_OFF },
 } as const satisfies Record<string, PrefSpec>
 
 /** One preference's key. */
@@ -325,12 +339,7 @@ type SpecValue<S> =
         S extends { readonly type: 'list' } ? string[] :
           never
 
-/**
- * The preference shape the browser half reads: one field per declaration above,
- * a choice field carrying its own values as a union, so a misspelt value fails
- * the type check. A boolean preference is on unless stored as an explicit
- * `false`.
- */
+/** Browser preference shape derived from declarations; choice fields retain their value unions. */
 export type Prefs = { [K in PrefKey]: SpecValue<typeof PREFS[K]> }
 
 /** Every preference's shipped default, from the table above. */
@@ -341,12 +350,7 @@ export const PREF_DEFAULTS = Object.freeze(Object.fromEntries(
 /** A `#rrggbb` colour, which is all the custom accent accepts. */
 const COLOR_RE = /^#[0-9a-f]{6}$/i
 
-/**
- * The shape an earlier build wrote for this value, or undefined. Only a string or
- * a boolean was ever written, and only the table's own keys name one: an object
- * holding a field called `toString`, or the string `toString` itself, is no
- * earlier shape.
- */
+/** Only declared string/boolean legacy values map; own-key checks exclude `toString` inheritance traps. */
 function legacyValue(spec: PrefSpec, raw: unknown): unknown {
   if (spec.legacy === undefined || (typeof raw !== 'string' && typeof raw !== 'boolean')) return undefined
   return Object.hasOwn(spec.legacy, String(raw)) ? spec.legacy[String(raw)] : undefined
@@ -375,18 +379,12 @@ function clampPref(spec: PrefSpec, raw: unknown): unknown {
   }
 }
 
-/**
- * Clamp one host value into the preference shape, field by field off the table:
- * a boolean stays on unless stored as `false`, a choice outside its set reads as
- * its default, a text is trimmed to its limit, a colour must be `#rrggbb`, and a
- * list keeps distinct ids within both limits.
- */
+/** Clamp every host field to its declaration; unreadable values use defaults. */
 export function clampPrefs(value: unknown): Prefs {
   const section: Record<string, unknown> = value !== null && typeof value === 'object' ? value as Record<string, unknown> : {}
   const out: Record<string, unknown> = {}
   for (const [key, spec] of Object.entries(PREFS) as [PrefKey, PrefSpec][]) out[key] = clampPref(spec, section[key])
-  // A build before the colour cards stored one accent; it becomes the first of the reader's four
-  // colours, and that card is the one in force, so the page looks the way it did.
+  // A stored accent becomes the first of the reader's four colours, and the custom card is the one in force.
   if (typeof out.brandAccent === 'string' && out.brandAccent !== '') {
     if (out.customAccent === '') out.customAccent = out.brandAccent
     out.paletteColors = PALETTE_COLORING_CUSTOM

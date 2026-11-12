@@ -8,7 +8,7 @@ body[data-dsh-claude-style] [data-composer-card][data-composer-variant="inline"]
 body[data-dsh-claude-style] [data-composer-card][data-composer-variant="inline"] [data-slot="conversation.input.model"] > .dsh-claude-model-seat {
   display: inline-flex;
   align-items: center;
-  font-size: 13px;
+  font-size: calc(13px * var(--dsh-claude-interface-font-scale, 1));
   color: var(--dsw-alias-label-secondary);
   border-radius: 7px;
   cursor: pointer;
@@ -23,8 +23,9 @@ body[data-dsh-claude-style] [data-composer-card][data-composer-variant="inline"]
    The host's own seat is one button carrying the same two texts; two hit areas
    cannot nest in one button, so the box is the container and each text is its
    own button. */
+/* The host writes an inline display on its root (D9). */
 body[data-dsh-claude-style] [data-dsh-claude-model-host] {
-  display: none;
+  display: none !important;
 }
 body[data-dsh-claude-style] [data-dsh-claude-part~="trailing"] .dsh-claude-model-seat {
   display: inline-flex;
@@ -126,15 +127,22 @@ body[data-dsh-claude-style] [data-dsh-claude-part~="trailing"] > [data-dsh-claud
 
 /* ---------- the host's stats row: hidden, its numbers moved elsewhere ---------- */
 /* The host ships two figures here (turns and steps · tok/s, total tokens · cache
-   hits) with its own icons and spacing; it marks each figure since its 2026-09
-   update and marked the container around them before, so both marks are hidden.
-   The row STAYS in the document: its structure still tells the detailed form
+   hits) with its own icons and spacing, and marks each figure, so the figures
+   are hidden. The row STAYS in the document: its structure still tells the detailed form
    from the compact one, and the session's numbers are read from the host's
    projections (features/context-stats/session-stats.ts) into whichever surface
    the position names — the context popover, or the line of their own below. */
-body[data-dsh-claude-style] [data-composer-stats],
 body[data-dsh-claude-style] [data-composer-stat] {
   display: none;
+}
+/* The dock keeps the host's floor for the readings it expects even while the skin
+   has taken them out of it: ui-conversation's InputBar reserves one 22px row plus
+   a 4px pad under the card, so the projections landing never move the composer.
+   In the context position the numbers live in the popover and nothing stands in
+   the dock, which left that floor as a blank line under the card. */
+body[data-dsh-claude-style][data-dsh-claude-stats-position="context"] [data-dsh-claude-part~="composer-dock"] {
+  min-height: 0;
+  padding-top: 0;
 }
 
 /* ---------- one type for the composer's bottom line ---------- */
@@ -149,11 +157,10 @@ body[data-dsh-claude-style] [data-composer-stat] {
 body[data-dsh-claude-style] [data-dsh-claude-context-meter],
 body[data-dsh-claude-style] [data-dsh-claude-context-meter] button,
 body[data-dsh-claude-style] [data-dsh-claude-meter-ring] > button,
-body[data-dsh-claude-style] [data-dsh-claude-part~="composer-stack"] [data-composer-stats],
 body[data-dsh-claude-style] [data-composer-card] [data-dsh-claude-part~="row"] .dsh-claude-model-btn,
 body[data-dsh-claude-style] [data-composer-card] [data-dsh-claude-part~="row"] .dsh-claude-effort-btn {
   font-family: var(--dsw-font-family);
-  font-size: 13px;
+  font-size: calc(13px * var(--dsh-claude-interface-font-scale, 1));
   font-weight: 500;
   line-height: 20px;
   letter-spacing: normal;
@@ -235,7 +242,7 @@ body[data-dsh-claude-style] .dsh-claude-context-stats-grid {
 }
 body[data-dsh-claude-style] .dsh-claude-context-stats-section {
   color: var(--dsw-alias-label-tertiary);
-  font-size: 11px;
+  font-size: calc(11px * var(--dsh-claude-interface-font-scale, 1));
   font-weight: 600;
   letter-spacing: 0.04em;
 }
@@ -247,7 +254,7 @@ body[data-dsh-claude-style] .dsh-claude-context-stats-item {
 }
 body[data-dsh-claude-style] .dsh-claude-context-stats-label {
   color: var(--dsw-alias-label-tertiary);
-  font-size: 12px;
+  font-size: calc(12px * var(--dsh-claude-interface-font-scale, 1));
   line-height: 16px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -255,7 +262,7 @@ body[data-dsh-claude-style] .dsh-claude-context-stats-label {
 }
 body[data-dsh-claude-style] .dsh-claude-context-stats-value {
   color: var(--dsw-alias-label-primary);
-  font-size: 14px;
+  font-size: calc(14px * var(--dsh-claude-interface-font-scale, 1));
   font-weight: 500;
   line-height: 20px;
   font-variant-numeric: tabular-nums;
@@ -280,22 +287,29 @@ body[data-dsh-claude-style] .dsh-claude-context-stats-value {
    them, so the gap carries what the glyph used to. The line is the button that
    opens the panel holding the same session's rows
    (features/context-stats/stats-binding.ts), and the shared focus ring marks it
-   where the reader tabs to it. */
+   where the reader tabs to it.
+
+   The line keeps the host row's own 20px text line here: it stands in the dock
+   the host draws the meter in, so a control height taller than that row would
+   deepen the composer's bottom edge against the compact footer's placement,
+   which takes the toolbar row's height (footer-layout.css). */
 body[data-dsh-claude-style] .dsh-claude-inline-stats {
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  height: var(--dsh-claude-footer-control-height);
   overflow: clip;
   color: var(--dsw-alias-label-primary);
   font-family: var(--dsw-font-family);
-  font-size: 13px;
+  font-size: calc(13px * var(--dsh-claude-interface-font-scale, 1));
   font-weight: 500;
   line-height: 20px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   cursor: pointer;
 }
+/* A figure holds its number and the host's own words after it
+   (features/context-stats/inline-stats.ts); a flex item trims the template's
+   leading space, so this gap is the only space between a number and its unit. */
 body[data-dsh-claude-style] .dsh-claude-inline-seg,
 body[data-dsh-claude-style] .dsh-claude-inline-figure {
   display: inline-flex;
@@ -332,16 +346,22 @@ body[data-dsh-claude-style] .dsh-claude-inline-arrow {
   color: var(--dsw-alias-label-tertiary);
 }
 /* The session's cost: the line's own figure style, the currency symbol
-   carrying the unit (features/context-stats/inline-stats.ts). The width is
-   held at an amount's own measure and the figure is right-aligned in it, so a
-   switch's placeholder and the amount that replaces it occupy the same room. */
+   carrying the unit (features/context-stats/inline-stats.ts). On its own line
+   the figure hugs its amount like every other figure, so the figures keep the
+   line's own gap. */
 body[data-dsh-claude-style] .dsh-claude-inline-cost {
   display: inline-flex;
   align-items: center;
   flex: none;
+  font-variant-numeric: tabular-nums;
+}
+/* In the toolbar the segment keeps an amount's own measure: the line leads with
+   the cost there, so a switch's box stands where no pair of figures can show its
+   slack, and the room the amount does not need is the line's leading edge
+   instead of a gap between two figures (docs/STYLE.md). */
+body[data-dsh-claude-style][data-dsh-claude-stats-position="footer"] .dsh-claude-inline-cost {
   min-width: 7ch;
   justify-content: flex-end;
-  font-variant-numeric: tabular-nums;
 }
 /* No figure for this session yet: the segment keeps its place with a dash. */
 body[data-dsh-claude-style] .dsh-claude-inline-cost[data-pending] {
@@ -486,7 +506,9 @@ body[data-dsh-claude-style] .dsh-claude-context-stats-skeleton-value {
   display: block !important;
   border-radius: 3px !important;
   background: var(--dsw-alias-interactive-bg-hover-solid, rgba(0, 0, 0, 0.06)) !important;
-  animation: dsh-claude-pulse var(--dsh-claude-period-pulse) var(--dsh-claude-ease-in-out) infinite !important;
+  /* The count is the choice's (theme/chrome.css, D40): this shorthand is
+     `!important`, so the net's own count would lose to it. */
+  animation: dsh-claude-pulse var(--dsh-claude-period-pulse) var(--dsh-claude-ease-in-out) var(--dsh-claude-loop-count, infinite) !important;
 }
 body[data-dsh-claude-style] .dsh-claude-context-stats-skeleton-label {
   width: 68% !important;

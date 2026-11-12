@@ -1,7 +1,9 @@
 import { buildElement } from '@dsh-claude-style/engine/dom'
 import { copy } from './copy'
+import { modelGroupName } from './provider-name'
 import { byModelId } from './rows'
 import { motionEaseAt, motionMs, motionValue } from '../../shared/motion'
+import { releaseCardHeight, travelCardHeight } from '../../shared/card-resize'
 import { motionReduced } from '../../core/prefs'
 import { requestFrame } from '@dsh-claude-style/engine/frame'
 import { CARET_FIELD_ATTR } from '../../constants'
@@ -146,26 +148,20 @@ export function createModelSubMenu(options: ModelSubMenuOptions) {
     // With no query the card carries what level 1 does not, the way it always
     // had. A query searches the whole catalog: the field is how a reader looks a
     // model up by name, and one level 1 already lists is still a model.
-    const sections = query === '' ? rows.remainingGroups(groups, rows.levelOneSections(groups)) : groups
+    const remaining = rows.remainingGroups(groups, rows.levelOneSections(groups))
+    // A catalog whose every provider is already on level 1 leaves this card
+    // nothing to carry, and the card would open on an empty list. It carries
+    // the whole catalog then: level 1 keeps no More-models row in that state
+    // (issue #286), so a key typed on it is what opens this card, and the
+    // catalog it lists is what the search field above filters.
+    const sections = query === '' ? (remaining.length > 0 ? remaining : groups) : groups
     let listed = 0
     for (let g = 0; g < sections.length; g++) {
       const group = sections[g]
       const found = group.models.slice().sort(byModelId).filter(model => admits(group, model, query))
       if (found.length === 0) continue
-      const section = buildElement('div', 'dsh-claude-model-group-section')
-      const groupRow = buildElement('div', 'dsh-claude-model-group-row')
-      const groupLabel = buildElement('div', 'dsh-claude-model-group')
-      // The group label is the provider's name alone: a mark there would repeat
-      // what the rows below already carry inside their lockups.
-      groupLabel.appendChild(buildElement('span', 'dsh-claude-model-group-name', group.name))
-      groupRow.appendChild(groupLabel)
-      section.appendChild(groupRow)
-      for (let m = 0; m < found.length; m++) {
-        const selected = current !== null && current.group.id === group.id && current.model.id === found[m].id
-        section.appendChild(rows.buildModelOption(group, found[m], selected, false))
-        listed += 1
-      }
-      body.appendChild(section)
+      body.appendChild(rows.buildProviderGroup(group, found, modelGroupName(group.id, group.name), current, false))
+      listed += found.length
     }
     if (listed === 0) {
       body.appendChild(buildElement('div', 'dsh-claude-popover-status', query === '' ? copy('empty') : copy('searchEmpty')))
@@ -174,46 +170,12 @@ export function createModelSubMenu(options: ModelSubMenuOptions) {
   }
 
   /**
-   * Take the card from the height it had to the height its new list gives it.
-   *
-   * A height cannot be interpolated into `auto`, so the travel needs both ends
-   * as lengths: the old height is written first (the number the box already
-   * had, so nothing moves), the new list is measured while the height is
-   * released, and that measured height is written on the next frame for the
-   * sheet's transition to carry. The height returns to the content once the
-   * travel lands, so a later list is never held at this one's size.
+   * Take the card from the height it had to the height its new list gives it
+   * (shared/card-resize.ts carries transitions.dev's "Card resize" both levels
+   * travel on).
    */
   function resizeThrough(card: HTMLElement, before: number) {
-    releaseHeight()
-    card.style.height = ''
-    const after = card.getBoundingClientRect().height
-    // A list that leaves the card the size it already was needs no travel.
-    if (Math.abs(after - before) < 1) return
-    card.style.height = `${before}px`
-    // Read once, so the browser holds the old height as the travel's start.
-    void card.getBoundingClientRect().height
-    resized = card
-    settleTimer = window.setTimeout(releaseHeight, motionMs('--dsh-claude-duration-resize') + 40)
-    requestFrame({
-      write() {
-        if (resized === card) card.style.height = `${after}px`
-      },
-    })
-  }
-
-  /** The card mid-travel, and the timer that hands its height back to the content. */
-  let resized: HTMLElement | null = null
-  let settleTimer: number | null = null
-
-  /** Hand the card's height back to its content: the state it rests in. */
-  function releaseHeight() {
-    if (settleTimer !== null) {
-      clearTimeout(settleTimer)
-      settleTimer = null
-    }
-    if (resized === null) return
-    resized.style.height = ''
-    resized = null
+    travelCardHeight(card, before)
   }
 
   /** Write the field's own state onto its box, and keep the mirror in step with the field's scroll. */
@@ -357,6 +319,18 @@ export function createModelSubMenu(options: ModelSubMenuOptions) {
     return true
   }
 
+  /**
+   * Take a key the reader pressed into the field, as their own typing does.
+   *
+   * The write announces itself as an input, which is what the caret measures
+   * again on (see emptyField), and the list under the field follows the words.
+   */
+  function type(text: string) {
+    field.value += text
+    field.setSelectionRange(field.value.length, field.value.length)
+    field.dispatchEvent(new Event('input', { bubbles: true }))
+  }
+
   field.addEventListener('input', () => {
     // A clear owns the mirror while its flight runs: the words leaving are still
     // on it, and syncing the field's own (now empty) words would wipe them.
@@ -395,12 +369,14 @@ export function createModelSubMenu(options: ModelSubMenuOptions) {
     focused() { return document.activeElement === field },
     /** Hand the field the reader's focus: a press on the More-models cell asks for it. */
     focus() { field.focus({ preventScroll: true }) },
+    /** Take a key the reader pressed into the field, as their own typing does. */
+    type,
     clearQuery,
     /** Fold the card's own state away: a query does not outlive the card that held it. */
     forget() {
       emptyField()
       settle()
-      releaseHeight()
+      releaseCardHeight()
       // The field's words went with the fold, so the next paint is not a search.
       lastQuery = ''
       painted = ''
@@ -409,7 +385,7 @@ export function createModelSubMenu(options: ModelSubMenuOptions) {
     release() {
       emptyField()
       settle()
-      releaseHeight()
+      releaseCardHeight()
       lastQuery = ''
       painted = ''
     },

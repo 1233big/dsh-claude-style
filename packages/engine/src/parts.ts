@@ -1,7 +1,7 @@
 import { holdRelations, partRegions } from './parts-table'
 import type { HoldRelation, PartTable, PartsTableVocabulary } from './parts-table'
 import { localClassName, setAttributeIfChanged } from './dom'
-import { subscribeMutations } from './bus'
+import { batchAdditions, subscribeMutations } from './bus'
 
 /**
  * The marking pass behind the skin's part vocabulary (D3) and the holds a
@@ -45,6 +45,12 @@ export interface PartsVocabulary extends PartsTableVocabulary {
 
 /** The vocabulary the current generation installed, or null before one did. */
 let adopted: PartsVocabulary | null = null
+
+/**
+ * The last generation whose marking pass installed: a teardown that finds a
+ * newer one here leaves the marks standing, because they are the newer one's.
+ */
+let lastPartsGeneration = 0
 
 /**
  * The vocabulary, or a refusal: the marking pass writes the skin's own
@@ -239,16 +245,17 @@ function dropHolds(node: Element): boolean {
 }
 
 /**
- * Re-answer the relations of every held node inside one element. A holder's own
+ * Re-answer the relations of the held nodes inside one element. A holder's own
  * mark or a scope anchor can arrive after the node it holds: the host adds
  * `data-phase` to a box its transcript already stands in, and the box is the
- * holder the rule reads.
+ * holder the rule reads. The subtree answers for itself, so a small box's
+ * attribute change never walks the held set of the whole page.
  */
 function remarkInside(element: Element): boolean {
   let changed = false
   for (const state of HOLD_STATES) {
-    for (const [node, holders] of state.held) {
-      if (node === element || !element.contains(node)) continue
+    if (state.spec.held === '') continue
+    for (const node of element.querySelectorAll(state.spec.held)) {
       if (remark(state, node, holdersOf(state.spec, node))) changed = true
     }
   }
@@ -325,6 +332,10 @@ function lookupsBelow(element: Element, lookups: readonly RegionLookup[]): reado
  * the region for everything inside that node; the node itself keeps its own
  * parts, because what the region names is its box, not what the host mounts in
  * it.
+ *
+ * The holds the marks decide are re-answered once for the walked root
+ * (remarkInside), not once per changed element: that call walks the root's held
+ * nodes, so a call per element would multiply it by the mount's own size.
  */
 function walk(element: Element, inherited: readonly RegionLookup[], roots: Map<string, string> | null): boolean {
   let lookups = inherited
@@ -340,10 +351,18 @@ function walk(element: Element, inherited: readonly RegionLookup[], roots: Map<s
   const below = lookupsBelow(element, lookups)
   for (const child of element.children) if (walk(child, below, childRoots)) changed = true
   if (applyHolds(element)) changed = true
-  // The element's own mark decides whether its ancestors are a holder or a
-  // scope for the nodes under it, so a mark written here re-answers them.
-  if (changed) remarkInside(element)
   return changed
+}
+
+/**
+ * Write the parts of one subtree now, inside the task that built it (D40). A
+ * feature that mounts its own list and measures it before handing the task back
+ * asks here: the marking pass reads the batch in the observer's callback, which
+ * is a task later than the one that wrote the nodes.
+ */
+export function markPartsWithin(root: Element) {
+  const { lookups, roots } = contextAt(root)
+  if (walk(root, lookups, roots)) remarkInside(root)
 }
 
 /** Take every part and hold mark off, for the teardown. */
@@ -367,10 +386,16 @@ export function clearParts(root: ParentNode = document) {
  * for one more pass, through `onMarked`. The next pass writes nothing (every
  * mark already holds) and the walk settles.
  *
+ * A teardown that runs after a newer generation has installed leaves the marks
+ * standing: they are the newer generation's, and clearing them would hand it a
+ * page without the parts its sheet reads (D74, as mountStylesheet guards its
+ * own sheet).
+ *
  * @param next - the skin's own attribute vocabulary and menu anchors (D73).
  * @param onMarked - called once per batch that changed a mark.
  */
 export function installParts(next: PartsVocabulary, onMarked?: () => void) {
+  const generation = ++lastPartsGeneration
   adopted = next
   LOOKUPS = buildLookups(next)
   ANCHOR_SELECTOR = partRegions(next).map((region) => region.within).join(', ')
@@ -379,7 +404,10 @@ export function installParts(next: PartsVocabulary, onMarked?: () => void) {
   HELD_SELECTOR = holdRelations(next).map((relation) => relation.held).join(', ')
   HOLD_ATTRIBUTES = new Set(holdRelations(next).flatMap((relation) => relation.attributes))
   const settle = () => { if (onMarked !== undefined) onMarked() }
-  if (walk(document.body, [], null)) settle()
+  if (walk(document.body, [], null)) {
+    remarkInside(document.body)
+    settle()
+  }
   const stop = subscribeMutations(document.body, {
     childList: true,
     subtree: true,
@@ -389,8 +417,15 @@ export function installParts(next: PartsVocabulary, onMarked?: () => void) {
     // relations' own attributes are watched too: the node they belong to can
     // take one after it was mounted, and the mark answers what the subtree
     // holds from there on.
-    attributeFilter: ['class', next.regions.account, next.regions.hero, ...HOLD_ATTRIBUTES],
+    attributeFilter: ['class', next.regions.account, next.regions.hero, next.regions.more, ...HOLD_ATTRIBUTES],
     skipQuiet: true,
+    // The marks this pass writes are what the sheet draws the frame with: the
+    // prose's face and line height, the table's widths. A session switch mounts
+    // its transcript in one large batch, and a pass that waited for the task
+    // after the paint drew that frame in the host's own type and then moved it
+    // (#178). The pass a batch asks for afterwards (`onMarked`) is the
+    // features' schedule, and that one still waits for its frame.
+    beforePaint: true,
   }, (records) => {
     let changed = false
     for (const record of records) {
@@ -404,7 +439,10 @@ export function installParts(next: PartsVocabulary, onMarked?: () => void) {
           const moved = record.target.matches(ANCHOR_SELECTOR)
             ? walk(record.target, lookups, roots)
             : writeParts(record.target, lookups, roots)
-          if (moved) changed = true
+          if (moved) {
+            changed = true
+            remarkInside(record.target)
+          }
           if (applyHolds(record.target)) changed = true
           // A holder's own attribute — the host's phase mark, the skin's row
           // mark — can arrive under a held node that is already standing.
@@ -418,16 +456,22 @@ export function installParts(next: PartsVocabulary, onMarked?: () => void) {
       for (const node of record.removedNodes) {
         if (node instanceof Element && dropHolds(node)) changed = true
       }
-      for (const node of record.addedNodes) {
-        if (!(node instanceof Element)) continue
-        const { lookups, roots } = contextAt(node)
-        if (walk(node, lookups, roots)) changed = true
+    }
+    // The additions are gathered once for the batch (D40): the walk reads that
+    // set rather than walking the records it came from a second time.
+    for (const node of batchAdditions(records).added) {
+      const { lookups, roots } = contextAt(node)
+      if (walk(node, lookups, roots)) {
+        changed = true
+        remarkInside(node)
       }
     }
     if (changed) settle()
   })
   return () => {
     stop()
-    clearParts()
+    // A newer generation installed after this one: its marks are the ones
+    // standing, and clearing them here would strip the page it just marked.
+    if (lastPartsGeneration === generation) clearParts()
   }
 }

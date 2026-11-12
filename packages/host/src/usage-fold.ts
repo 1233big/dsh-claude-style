@@ -2,10 +2,10 @@
  * The session logs: which ones exist, how to read one, and the fold that turns
  * its events into per-day buckets and hour histograms.
  *
- * The events come through the host's own `sessionQuery` service. The logs are
- * multi-frame zstd (one frame per appended batch: a 9 MB log holds ~4000 frames)
- * and `node:zlib` decodes only the first frame, silently discarding the rest — so
- * the frames are left to the engine's reader and only the aggregation is ours.
+ * The events come through the host's own `sessionQuery` service. A log is
+ * multi-frame zstd and `node:zlib` decodes only the first frame, silently
+ * discarding the rest, so the frames are left to the engine's reader and only
+ * the aggregation is ours.
  *
  * The fold mirrors the host's own `tokenUsage` projection (see
  * `@deepseek-ai/dsh-token-meter/usage-projection`): one durable Assistant
@@ -14,9 +14,11 @@
  * buckets are disjoint. The one addition is the day dimension: a replaced sample
  * is subtracted from the day it was recorded on.
  */
-import { existsSync, readdirSync, statSync } from 'node:fs'
+import { existsSync } from 'node:fs'
+import { readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { DshContext } from '@dsh-claude-style/engine/node/dsh'
+import { sessionIdFromDirectoryName } from './session-name.js'
 import { BUCKET_KEYS, addBuckets, emptyBuckets } from './usage-ledger.js'
 import type { Buckets, DayBuckets } from './usage-ledger.js'
 
@@ -47,9 +49,12 @@ export interface UsageSample {
   cacheWriteTokens?: unknown
 }
 
-/** One session log on disk: its id, its path and its fingerprint. */
+/** One session log on disk: its logical id, the name it is stored under, and its fingerprint. */
 export interface SessionLog {
+  /** The logical id, decoded from the directory name: what the session services look a session up by. */
   id: string
+  /** The directory name on disk, which is also the key the usage record holds. */
+  storedName: string
   path: string
   size: number
   mtimeMs: number
@@ -113,10 +118,9 @@ function bucketsEqual(left: Buckets, right: Buckets) {
 
 /**
  * The route a settlement's sample belongs to, or null when the event names none.
- *
  * Only `assistant/message` carries the assembled message; an `assistant/attempt`
- * that committed no surface message keeps its usage but has no route to attribute
- * it to, and its tokens then count toward the day alone.
+ * that committed no surface message keeps its usage but has no route, so its
+ * tokens count toward the day alone.
  */
 export function modelOf(event: UsageEvent): string | null {
   const model = event?.data?.message?.source?.model
@@ -125,9 +129,9 @@ export function modelOf(event: UsageEvent): string | null {
 
 /**
  * Fold one session's events into per-day buckets, plus a settlement count per
- * hour of day — the dashboard's peak-hour cell — both for the whole session and
- * for each day, so a range window can sum its own days' hours. A replaced
- * sample leaves its hour the same way it leaves its day.
+ * hour of day for the dashboard's peak-hour cell, both for the whole session and
+ * for each day, so a range window can sum its own days' hours. A replaced sample
+ * leaves its hour the same way it leaves its day.
  *
  * @param events - the session's durable events, in sequence order.
  * @returns a map of local day key to buckets, and a 24-slot hour histogram.
@@ -198,10 +202,10 @@ export function foldSession(events: UsageEvent[]): FoldedSession {
 }
 
 /** The newest generation of a session directory's log, with its fingerprint. */
-function newestLog(dir: string): { path: string, size: number, mtimeMs: number } | null {
+async function newestLog(dir: string): Promise<{ path: string, size: number, mtimeMs: number } | null> {
   let entries
   try {
-    entries = readdirSync(dir, { withFileTypes: true })
+    entries = await readdir(dir, { withFileTypes: true })
   } catch (error) {
     // A session directory removed between the root listing and this read is a
     // session deleted mid-pass: it has no log to fold, and every other one
@@ -223,25 +227,30 @@ function newestLog(dir: string): { path: string, size: number, mtimeMs: number }
   }
   if (best === null) return null
   const path = join(dir, best.name)
-  const stat = statSync(path, { throwIfNoEntry: false })
-  // The log itself removed between that listing and this stat is the same
-  // deletion the directory read above tolerates.
-  if (stat === undefined) return null
-  return { path, size: stat.size, mtimeMs: stat.mtimeMs }
+  try {
+    const info = await stat(path)
+    return { path, size: info.size, mtimeMs: info.mtimeMs }
+  } catch (error) {
+    // The log itself removed between that listing and this stat is the same
+    // deletion the directory read above tolerates.
+    if ((error as { code?: string }).code === 'ENOENT') return null
+    throw error
+  }
 }
 
 /**
- * Every stored session: id, newest log, and that log's fingerprint. A harness
- * home that has never stored a session has no sessions root yet.
+ * Every stored session: its logical id, the directory name it is stored under,
+ * its newest log and that log's fingerprint. A harness home that has never
+ * stored a session has no sessions root yet.
  */
-export function listSessionLogs(root: string): SessionLog[] {
+export async function listSessionLogs(root: string): Promise<SessionLog[]> {
   const out: SessionLog[] = []
   if (!existsSync(root)) return out
-  for (const project of readdirSync(root, { withFileTypes: true })) {
+  for (const project of await readdir(root, { withFileTypes: true })) {
     if (!project.isDirectory()) continue
     let sessions
     try {
-      sessions = readdirSync(join(root, project.name), { withFileTypes: true })
+      sessions = await readdir(join(root, project.name), { withFileTypes: true })
     } catch (error) {
       // A workspace directory removed since the root listing went with its
       // sessions: the pass walks the ones that are left.
@@ -250,9 +259,10 @@ export function listSessionLogs(root: string): SessionLog[] {
     }
     for (const session of sessions) {
       if (!session.isDirectory()) continue
-      const log = newestLog(join(root, project.name, session.name))
+      const log = await newestLog(join(root, project.name, session.name))
       if (log === null) continue
-      out.push({ id: session.name, ...log })
+      const storedName = session.name
+      out.push({ id: sessionIdFromDirectoryName(storedName), storedName, ...log })
     }
   }
   return out

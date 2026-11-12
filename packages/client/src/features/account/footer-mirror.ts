@@ -1,6 +1,7 @@
 import { FOOTER_ACTIONS_SELECTOR } from '@dsh-claude-style/contracts/dom'
 import { findFootArea } from '@dsh-claude-style/engine/host'
 import { hasSkinClass } from '@dsh-claude-style/engine/dom'
+import { FOOTER_BLOCK_ATTR, FOOTER_SEAT_ATTR, FOOTER_SEATS } from '../../constants'
 import { buildPopoverItem } from '../../shared/popover'
 import { copy } from './copy'
 
@@ -25,6 +26,29 @@ export function createFooterMirror(options: {
   }
 
   /**
+   * Whether a press this skin must not interrupt is in flight: the browser is
+   * between a pointerdown and its pointerup, anywhere on the page.
+   */
+  const pressing = new Set<number>()
+
+  function pressInFlight() {
+    return pressing.size > 0
+  }
+
+  // Every press on the document is tracked, in the capture phase so the set is
+  // already filled before any row's own handler runs. A press that never
+  // reports its pointerup — the window lost focus while the button was down —
+  // is cleared by the blur handler, or the card would never take a rewrite
+  // again.
+  const onPressStart = (event: PointerEvent) => { pressing.add(event.pointerId) }
+  const onPressEnd = (event: PointerEvent) => { pressing.delete(event.pointerId) }
+  const onPressCleared = () => { pressing.clear() }
+  document.addEventListener('pointerdown', onPressStart, true)
+  document.addEventListener('pointerup', onPressEnd, true)
+  document.addEventListener('pointercancel', onPressCleared, true)
+  window.addEventListener('blur', onPressCleared)
+
+  /**
    * Hide the footer's own controls in place and return the units the drawer
    * mirrors. The `sidebar.footer.action` list slot accepts arbitrary plugin
    * controls, not just buttons: a plugin may render a composite widget
@@ -42,18 +66,27 @@ export function createFooterMirror(options: {
    *   - an entry that IS an overlay (a plugin's own dialog mounted into
    *     the footer, the cost-meter update notice) is no unit at all: it
    *     is left whole, marked `data-dsh-claude-footer-overlay` and
-   *     nothing else, so the takeover writes no display rule onto it.
+   *     nothing else, so the takeover writes no display rule onto it;
+   *   - an entry a FOOTER_SEATS seat claims (constants.ts) stays in the
+   *     sidebar: it keeps its entry mark and gains the seat and the snapshot
+   *     its rule copies, and the popover gathers no row for it.
+   *   - an entry that is a `<section>` is a block the plugin laid out for the
+   *     sidebar, not a control: it keeps its place above the account row under
+   *     FOOTER_BLOCK_ATTR, the popover carries a copy of it for the collapsed
+   *     rail alone.
    * Returns the live entry list for popover mirroring.
    */
   function syncFooterVisibility(footArea: Element) {
-    const fixed = fixedRead !== null && fixedRead.footArea === footArea ? fixedRead.fixed : null
-    fixedRead = null
+    const read = fixedRead !== null && fixedRead.footArea === footArea ? fixedRead : null
+    // The pass measures one footer, and only that footer's sync may take the
+    // reading: a sync for another element leaves it to the reader it belongs to.
+    if (read !== null) fixedRead = null
     const entries = footerEntriesIn(footArea)
     for (let i = 0; i < entries.length; i++) {
       const entry = entries[i]
       // A sync outside a pass (the popover opening) has no read phase, and
       // reads the panels while it writes.
-      const entryOverlay = isOverlay(entry) || (fixed === null ? isFixedPanel(entry) : fixed.has(entry))
+      const entryOverlay = isOverlay(entry) || isFixedPanelForSync(entry, read)
       if (entryOverlay) {
         // An entry that is itself an overlay — a plugin's own dialog mounted
         // into the footer (the cost-meter update notice), or a fixed panel — is
@@ -63,15 +96,43 @@ export function createFooterMirror(options: {
         // overlay that nothing paints (issue #97).
         entry.removeAttribute('data-dsh-claude-footer-entry')
         entry.removeAttribute('data-dsh-claude-footer-hidden')
+        entry.removeAttribute(FOOTER_BLOCK_ATTR)
         entry.setAttribute('data-dsh-claude-footer-overlay', '')
         continue
       }
+      const seat = seatOf(entry)
+      if (seat !== null) {
+        // A kept entry stands in the sidebar: the account row carries a copy of
+        // it (footer-seats.ts), and the plugin's own node stays hidden in its
+        // slot rather than collapsed into the popover. Neither the entry mark
+        // nor the hidden mark is written — the seat rule owns the node.
+        entry.setAttribute(FOOTER_SEAT_ATTR, seat)
+        entry.removeAttribute('data-dsh-claude-footer-entry')
+        entry.removeAttribute('data-dsh-claude-footer-hidden')
+        entry.removeAttribute(FOOTER_BLOCK_ATTR)
+        continue
+      }
+      entry.removeAttribute(FOOTER_SEAT_ATTR)
+      const block = entry.tagName === 'SECTION'
+      if (block) {
+        // A section is the plugin's own block laid out for the sidebar — a
+        // heading and the rows under it — not a control the account menu can
+        // stand in for: it keeps its place above the account row, and
+        // footer-takeover.css gives the footer's action box its size back for
+        // it. The popover still carries a copy, which the rail shows where the
+        // block itself has no room.
+        entry.setAttribute(FOOTER_BLOCK_ATTR, '')
+        entry.removeAttribute('data-dsh-claude-footer-entry')
+        entry.removeAttribute('data-dsh-claude-footer-hidden')
+        continue
+      }
+      entry.removeAttribute(FOOTER_BLOCK_ATTR)
       entry.setAttribute('data-dsh-claude-footer-entry', '')
       const all = entry.querySelectorAll('*')
       for (let j = 0; j < all.length; j++) {
         const el = all[j]
         if (el.hasAttribute('data-dsh-claude-footer-overlay')) continue
-        const overlay = isOverlay(el) || (fixed === null ? isFixedPanel(el) : fixed.has(el))
+        const overlay = isOverlay(el) || isFixedPanelForSync(el, read)
         if (overlay) el.setAttribute('data-dsh-claude-footer-overlay', '')
       }
       markFooterHiddenBranches(entry)
@@ -85,6 +146,19 @@ export function createFooterMirror(options: {
     const all = entry.querySelectorAll('*')
     for (let i = 0; i < all.length; i++) nodes.push(all[i])
     return nodes
+  }
+
+  /**
+   * The seat a footer entry keeps in the sidebar, or null for an entry the
+   * popover gathers (constants.ts, FOOTER_SEATS). A seat is matched on the
+   * naming the plugin itself writes on its control, so the skin reaches a
+   * control the plugin owns without a class name the build hashes.
+   */
+  function seatOf(entry: Element) {
+    for (const option of FOOTER_SEATS) {
+      if (entry.matches(option.selector)) return option.seat
+    }
+    return null
   }
 
   /**
@@ -105,23 +179,39 @@ export function createFooterMirror(options: {
     return window.getComputedStyle(el).position === 'fixed'
   }
 
+  /** A node mounted after the read phase still needs its own fixed-position answer. */
+  function isFixedPanelForSync(el: Element, read: { fixed: Set<Element>, measured: Set<Element> } | null) {
+    if (read !== null && read.measured.has(el)) return read.fixed.has(el)
+    return isFixedPanel(el)
+  }
+
   /**
    * The footer elements laid out as fixed panels, read in the pass's read phase
    * and taken by the same pass's sync (D40): a computed style read while the
-   * pass writes forces the page's whole style recalc under it.
+   * pass writes forces the page's whole style recalc under it. `measured` tells
+   * a later sync which nodes already have an answer; a panel mounted between
+   * that read and the sync is measured on its own rather than collapsed as an
+   * ordinary entry (the Remote page's backdrop).
    */
-  let fixedRead: { footArea: Element, fixed: Set<Element> } | null = null
+  let fixedRead: { footArea: Element, fixed: Set<Element>, measured: Set<Element> } | null = null
 
   function measure(footArea: Element) {
     const fixed = new Set<Element>()
+    const measured = new Set<Element>()
     for (const entry of footerEntriesIn(footArea)) {
       const nodes = entryNodes(entry)
       for (let i = 0; i < nodes.length; i++) {
         const el = nodes[i]
-        if (!el.hasAttribute('data-dsh-claude-footer-overlay') && !isOverlay(el) && isFixedPanel(el)) fixed.add(el)
+        measured.add(el)
+        // A node already carrying the overlay mark is read like any other: the
+        // mark is this function's own earlier answer, and skipping it leaves
+        // `sync` with no reading for a panel it had marked. The node then falls
+        // back to the entry's first control, which takes the panel's box away
+        // with `display: contents` (the Remote page's own backdrop is the case).
+        if (!isOverlay(el) && isFixedPanel(el)) fixed.add(el)
       }
     }
-    fixedRead = { footArea, fixed }
+    fixedRead = { footArea, fixed, measured }
   }
 
   /**
@@ -250,7 +340,12 @@ export function createFooterMirror(options: {
       // container (a region or tabindex wrapper) is still a widget.
       const tag = entry.tagName
       const role = entry.getAttribute('role') || ''
-      return tag === 'BUTTON' || tag === 'A' || role === 'button'
+      if (tag !== 'BUTTON' && tag !== 'A' && role !== 'button') return false
+      // A card can be the control itself: a quota card is one button whose
+      // rows draw a label, an amount and a percentage each. One label belongs
+      // in a menu item; a drawing with several figures keeps its markup, so a
+      // text item would drop what the card exists to show.
+      return textPieces(entry) < 3
     }
     // Semantic meter markup is always a widget, however small.
     if (entry.querySelector('[role="progressbar"], [role="meter"], meter, progress') !== null) return false
@@ -262,9 +357,13 @@ export function createFooterMirror(options: {
     return entryText.length - triggerText.length <= 2
   }
 
-  /** Visible text of an entry, skipping overlay subtrees. */
-  function textExcludingOverlays(entry: Element) {
-    let text = ''
+  /**
+   * The entry's own text nodes, in document order, with the subtrees of any
+   * overlay left out: an open panel's copy must not change what its entry
+   * reads as.
+   */
+  function ownTextNodes(entry: Element): Text[] {
+    const nodes: Text[] = []
     const walker = document.createTreeWalker(entry, 4 /* SHOW_TEXT */, {
       acceptNode(node) {
         let p = node.parentElement
@@ -275,8 +374,28 @@ export function createFooterMirror(options: {
         return 1 // ACCEPT
       }
     })
-    while (walker.nextNode()) text += walker.currentNode.nodeValue
-    return text.trim()
+    while (walker.nextNode()) nodes.push(walker.currentNode as Text)
+    return nodes
+  }
+
+  /**
+   * The number of separate leaves an entry writes text into. One label is an
+   * action's whole vocabulary; a card that draws figures has several (a name,
+   * an amount and a percentage per row), and a text menu item would drop them.
+   */
+  function textPieces(entry: Element): number {
+    const nodes = ownTextNodes(entry).filter(node => (node.nodeValue || '').trim() !== '')
+    let pieces = 0
+    for (let at = 0; at < nodes.length; at++) {
+      const parent = nodes[at].parentElement
+      if (parent !== null && !nodes.slice(0, at).some(earlier => earlier.parentElement === parent)) pieces++
+    }
+    return pieces
+  }
+
+  /** Visible text of an entry, skipping overlay subtrees. */
+  function textExcludingOverlays(entry: Element) {
+    return ownTextNodes(entry).map(node => node.nodeValue).join('').trim()
   }
 
   /**
@@ -332,10 +451,18 @@ export function createFooterMirror(options: {
       stripped[s].removeAttribute('data-dsh-claude-footer-hidden')
     }
     const html = clone.outerHTML
-    if (embed.getAttribute('data-embed-html') !== html) {
+    // A replacement between pointerdown and pointerup takes the node the reader
+    // is pressing away from under them: the browser cancels the press and the
+    // click never lands. A plugin that repaints its own card while the reader is
+    // pressing it does this on every poll, so the rewrite waits for the press to
+    // finish and the next pass carries the change in. Outside a press the card
+    // stays live, which is what keeps a figure that updates while the card is
+    // open from freezing at the value it had when the card opened.
+    if (embed.getAttribute('data-embed-html') !== html && !pressInFlight()) {
       embed.setAttribute('data-embed-html', html)
       while (embed.firstChild) embed.removeChild(embed.firstChild)
       embed.appendChild(clone)
+      embed.classList.toggle('dsh-claude-popover-embed-section', clone.tagName === 'SECTION')
     }
   }
 
@@ -441,13 +568,13 @@ export function createFooterMirror(options: {
     // drawer is opened once.
     if (body === null) return
 
-    // While the popover is open, its mirrors must stay completely static:
-    // a content rewrite, reorder, or embedded-clone replacement under the
-    // pointer cancels the browser's :hover state and can swallow the click
-    // between pointerdown and pointerup. Sync runs only while closed;
-    // openPopover runs one final pass right before the reveal — and the
-    // sidebar-side redirection above stays live, so a newly mounted entry
-    // keeps being hidden even with the popover open.
+    // The self-built drawer builds its rows before it is revealed and must stay
+    // completely static afterwards: a rewrite under the pointer cancels the
+    // browser's :hover and can swallow the click between pointerdown and
+    // pointerup. The host's own menu is the other case — it mounts empty and
+    // these rows are what fills it, so a sync that stopped while it stands would
+    // leave the card with no rows at all. There only the embed's rewrite waits
+    // for a press (see `pressInFlight`); the rows themselves stay live.
     if (options.isOpen()) return
 
     const existingActionItems = body.querySelectorAll('[data-action-index], [data-embed-index]')
@@ -475,6 +602,10 @@ export function createFooterMirror(options: {
         // row, and a clone of it would carry the dialog's own `open` into the
         // popover as a second, non-modal copy.
         if (entry.hasAttribute('data-dsh-claude-footer-overlay')) return
+        // An entry the skin keeps in the sidebar already stands where the
+        // reader finds it: a second copy inside the popover would be two
+        // controls for one state.
+        if (entry.hasAttribute(FOOTER_SEAT_ATTR)) return
         const trigger = findFooterTrigger(entry)
         const hasContent = (entry.textContent || '').trim() !== '' ||
                          entry.querySelector('svg, img, canvas') !== null
@@ -485,9 +616,10 @@ export function createFooterMirror(options: {
         // balance stack is itself clickable). A card a plugin mounted into
         // the footer itself is one of those whatever its own text says: the
         // usage card reads as one line, and a text row would drop the
-        // figures it draws, so it keeps its own markup.
+        // figures it draws, so it keeps its own markup. A block is one for
+        // the same reason, and its clone is the copy the rail shows.
         const inSlot = entry.closest(FOOTER_ACTIONS_SELECTOR) !== null
-        if (!inSlot || !entryIsActionLike(entry, trigger)) {
+        if (!inSlot || entry.hasAttribute(FOOTER_BLOCK_ATTR) || !entryIsActionLike(entry, trigger)) {
           removeActionMirror(idx)
           if (hasContent) {
             syncEmbedMirror(entry, idx, trigger)
@@ -589,14 +721,25 @@ export function createFooterMirror(options: {
   /** Drop every takeover marker from the host's footer entries. */
   function clear(footArea: Element) {
     const marked = footArea.querySelectorAll(
-      '[data-dsh-claude-footer-entry], [data-dsh-claude-footer-hidden], [data-dsh-claude-footer-overlay]',
+      '[data-dsh-claude-footer-entry], [data-dsh-claude-footer-hidden], [data-dsh-claude-footer-overlay], [data-dsh-claude-footer-seat], [data-dsh-claude-footer-block]',
     )
     for (let i = 0; i < marked.length; i++) {
       marked[i].removeAttribute('data-dsh-claude-footer-entry')
       marked[i].removeAttribute('data-dsh-claude-footer-hidden')
       marked[i].removeAttribute('data-dsh-claude-footer-overlay')
+      marked[i].removeAttribute(FOOTER_SEAT_ATTR)
+      marked[i].removeAttribute(FOOTER_BLOCK_ATTR)
     }
   }
 
-  return { measure, sync, clear }
+  /** Take the press tracker off: the listeners outlive no generation. */
+  function stop() {
+    document.removeEventListener('pointerdown', onPressStart, true)
+    document.removeEventListener('pointerup', onPressEnd, true)
+    document.removeEventListener('pointercancel', onPressCleared, true)
+    window.removeEventListener('blur', onPressCleared)
+    pressing.clear()
+  }
+
+  return { measure, sync, clear, stop }
 }

@@ -1,8 +1,9 @@
-import { COMPOSER_ATTR, COMPOSER_HIDDEN_ATTR, HOME_LAYOUT_STUDIO, MOBILE_PORTRAIT_ATTR, TRANSCRIPT_ATTR } from '../../constants'
-import { COMPOSER_ATTACHMENT_RAIL_SELECTOR, COMPOSER_INPUT_SELECTOR, CONVERSATION_TABS_SELECTOR, MOBILE_PORTRAIT_SELECTOR, PHASE_ATTRIBUTE } from '@dsh-claude-style/contracts/dom'
+import { COMPOSER_ATTR, COMPOSER_HIDDEN_ATTR, HOME_LAYOUT_STUDIO, MOBILE_PORTRAIT_ATTR, PART_ATTR, TRANSCRIPT_ATTR } from '../../constants'
+import { COMPOSER_ATTACHMENT_RAIL_SELECTOR, COMPOSER_CARD_SELECTOR, COMPOSER_INPUT_SELECTOR, COMPOSER_VARIANT_ATTRIBUTE, CONVERSATION_VIEW_CONTEXT, CONVERSATION_VIEW_STATS, CONVERSATION_VIEW_TRAJECTORY, MOBILE_PORTRAIT_SELECTOR, PERMISSION_TRIGGER_SELECTOR, PHASE_ATTRIBUTE, SIDEBAR_CHAT_SELECTOR } from '@dsh-claude-style/contracts/dom'
+import { subscribeMutations } from '@dsh-claude-style/engine/bus'
 import { requestFrame } from '@dsh-claude-style/engine/frame'
 import { conversationColumn } from '@dsh-claude-style/engine/chat-dom'
-import { COMPOSER_STACK, closestComposerCard, findAccessTrigger, findComposerPlaceholder, findComposerSeat, findConversationScroller, findHeroRoot, observeComposerCards, observeComposerPlaceholders } from '@dsh-claude-style/engine/host'
+import { COMPOSER_STACK, closestComposerCard, conversationSessionId, conversationViewPreference, findAccessTrigger, findComposerPlaceholder, findComposerRowIn, findPageComposerSeat, findConversationScroller, findConversationSession, findHeroRoot, observeComposerCards, observeComposerPlaceholders } from '@dsh-claude-style/engine/host'
 import { composerRestyleRetired, readPrefs } from '../../core/prefs'
 import type { HostContext } from '@dsh-claude-style/engine/host'
 import type { FeatureHandle } from '@dsh-claude-style/engine/scheduler'
@@ -10,14 +11,21 @@ import type { FeatureUi } from '../../core/feature'
 import type manifest from './composer.manifest'
 import { closestFrom, setAttributeIfChanged } from '@dsh-claude-style/engine/dom'
 import { writeScroll } from '@dsh-claude-style/engine/scroll-owner'
-import { captureComposerCaret, focusKeepingComposerCaret } from '../../shared/composer-caret'
+import { captureComposerCaret, composerComposing, focusKeepingComposerCaret } from '../../shared/composer-caret'
 import { createPlaceholderCopy } from './placeholder-copy'
 import { installWindowBlurMirror } from './selection-mirror'
+import { createComposerResponsive } from './responsive'
+import { createComposerViewportFollow } from './visual-viewport'
+
+/** Inspection views where the host's composer seat stands down; content and plugin views keep it. */
+const COMPOSER_HIDDEN_VIEWS: ReadonlySet<string> = new Set([CONVERSATION_VIEW_TRAJECTORY, CONVERSATION_VIEW_CONTEXT, CONVERSATION_VIEW_STATS])
 
 /** What other features read off the composer's reading (ui.composer). */
 export interface ComposerHandle extends FeatureHandle {
   isHero(): boolean
   heroCard(): HTMLElement | null
+  /** Every composer card on the page, the sidebar's own included. */
+  cards(): readonly HTMLElement[]
   isActive(): boolean
   isStudioHome(): boolean
   isChatHidden(): boolean
@@ -51,7 +59,9 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
   /** The idle hint's own words, and the synthetic placeholder that carries them. */
   const cards = observeComposerCards()
   const placeholders = observeComposerPlaceholders()
-  const placeholderCopy = createPlaceholderCopy(cards, placeholders)
+  const placeholderCopy = createPlaceholderCopy(cards, placeholders, composerComposing)
+  const responsive = createComposerResponsive()
+  const stopViewportFollow = createComposerViewportFollow()
   /**
    * The attachment tiles the skin marked, read once at install so a generation
    * whose teardown a hot reload dropped still has its marks swept.
@@ -61,6 +71,16 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
   const stopWindowBlur = installWindowBlurMirror()
 
   /**
+   * A composition has landed: the hint's writes were held back while one was in
+   * flight, and the host's own flag may still stand when this listener runs, so
+   * the settle waits for the frame after it.
+   */
+  const onCompositionEnd = () => {
+    requestFrame({ write() { placeholderCopy.settle(hero, active) } })
+  }
+  document.addEventListener('compositionend', onCompositionEnd, true)
+
+  /**
    * Read the page's composer state. The host marks the conversation root
    * `data-phase="hero"` exactly when it renders the hero composer (no
    * session yet, or a blank one), so that marker is the whole test; the
@@ -68,10 +88,9 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
    * page.
    */
   function readState() {
-    // Read through the kept match: this runs on every pass, and on the
-    // conversation page the hero marker is absent, so a bare query re-walked
-    // the document every frame for an answer that only the host's own
-    // re-render can change (D9).
+    // The engine's hero root skips the sidebar's docked conversation: a blank
+    // sub-agent session carries the same marker but is not this page's start
+    // screen.
     hero = findHeroRoot() !== null
     const scope = readPrefs().composerScope
     active = !composerRestyleRetired && (scope === 'all' || (hero ? scope === 'hero' : scope === 'conversation'))
@@ -89,14 +108,17 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
    * single-line form, so a studio hero page stamps `inline`, not `hero`.
    */
   function syncVariant(cards: readonly HTMLElement[]) {
-    const value = hero && !studioHome ? 'hero' : 'inline'
-    const stacks = new Set<Element>()
+    const stacks = new Map<Element, string>()
     for (const card of cards) {
-      setAttributeIfChanged(card, 'data-composer-variant', value)
+      // A docked conversation keeps the inline form even on a hero page: it is
+      // never the page's own start screen.
+      const docked = card.closest(SIDEBAR_CHAT_SELECTOR) !== null
+      const value = hero && !studioHome && !docked ? 'hero' : 'inline'
+      setAttributeIfChanged(card, COMPOSER_VARIANT_ATTRIBUTE, value)
       const stack = card.closest(COMPOSER_STACK)
-      if (stack !== null) stacks.add(stack)
+      if (stack !== null && stacks.get(stack) !== 'hero') stacks.set(stack, value)
     }
-    for (const stack of stacks) setAttributeIfChanged(stack, 'data-composer-variant', value)
+    for (const [stack, value] of stacks) setAttributeIfChanged(stack, COMPOSER_VARIANT_ATTRIBUTE, value)
   }
 
   /**
@@ -126,6 +148,8 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
    */
   const ATTACHMENT_TILES = `${ATTACHMENT_RAIL} :is([data-dsh-claude-part~="attachment-image-item"], [data-dsh-claude-part~="attachment-thumbnail"], [data-dsh-claude-part~="attachment-item"]:has(img), [data-dsh-claude-part~="composer-card-box"]:has(img))`
   const ATTACHMENT_TILE_ATTR = 'data-dsh-claude-attachment'
+  /** The pass's mark on a card holding attachments, which the host submits without any text. */
+  const ATTACHED_ATTR = 'data-has-attachments'
   /**
    * The card's attachment nodes, as the restyle looks for them. A card the host
    * has rebuilt holds them where neither the parts walk nor a class name says
@@ -157,10 +181,10 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
       const held = [...heldNodes.keys()].some(node => lastHolder.get(node) === card)
       const carries = active && (card.querySelector(ATTACHMENT_PRESENT) !== null || held)
       if (carries) {
-        setAttributeIfChanged(card, 'data-has-attachments', 'true')
+        setAttributeIfChanged(card, ATTACHED_ATTR, 'true')
         for (const tile of card.querySelectorAll(ATTACHMENT_TILES)) tiles.add(tile)
       } else {
-        card.removeAttribute('data-has-attachments')
+        card.removeAttribute(ATTACHED_ATTR)
       }
     }
     // The skin wrote every mark, so the sweep reads its own registry (D40)
@@ -190,6 +214,15 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
   }
 
   const CONTROL_ATTR = 'data-dsh-claude-control'
+  /** Set on a primary button the card keeps off the page, so the one left standing takes the press (inline.css). */
+  const HIDDEN_ATTR = 'data-dsh-claude-control-hidden'
+  /** Whether the card's draft is empty, which the send button's ghost and the one standing primary button read. */
+  const DRAFT_EMPTY_ATTR = 'data-dsh-claude-draft-empty'
+  /**
+   * The card's primary button, as the host draws it: the trailing row's button
+   * the parts walk marked as the composer's primary one.
+   */
+  const PRIMARY_SELECTOR = '[data-dsh-claude-part~="trailing"] button[data-dsh-claude-part~="composer-primary"]'
 
   /**
    * Mark each host control on the composer with what it is, so the
@@ -199,22 +232,48 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
    *   commands — the tools row's `+`, the one button that opens a listbox;
    *   stop / send — the trailing row's primary buttons, told apart by their
    *     glyph: stop draws a rect, the submit arrow a path (queue and steer
-   *     are the same submit button under another label);
+   *     are the same submit button under another label). A running
+   *     continuable subagent makes the row carry two of them, the host's
+   *     stop button beside the submit;
    *   access — the button the permission slot renders (host.ts).
    */
   function syncControls(cards: readonly HTMLElement[]) {
     for (const card of cards) {
+      // A docked card's row is outside the part walk, so the sheet's toolbar
+      // rules never reach it: the host's own row wraps, and the trailing model
+      // cluster falls onto a second line with room to spare. Name the row so
+      // inline.css lays it out exactly like the primary card's.
+      const row = findComposerRowIn(card)
+      if (row !== null) setAttributeIfChanged(row, PART_ATTR, 'row')
       const commands = card.querySelector('[data-dsh-claude-part~="tools"] button[aria-haspopup="listbox"]')
       if (commands !== null) setAttributeIfChanged(commands, CONTROL_ATTR, 'commands')
-      for (const button of card.querySelectorAll('[data-dsh-claude-part~="trailing"] button[data-dsh-claude-part~="composer-primary"]')) {
-        setAttributeIfChanged(button, CONTROL_ATTR, button.querySelector('svg rect') !== null ? 'stop' : 'send')
+      const primaries = card.querySelectorAll<HTMLElement>(PRIMARY_SELECTOR)
+      let stop: HTMLElement | null = null
+      let send: HTMLElement | null = null
+      for (const button of primaries) {
+        const control = button.querySelector('svg rect') !== null ? 'stop' : 'send'
+        setAttributeIfChanged(button, CONTROL_ATTR, control)
+        if (control === 'stop') stop ??= button
+        else send ??= button
+      }
+      // Two buttons stand in one place, so the draft decides which of them the
+      // page keeps: an empty card leaves the stop, one with text or attachments
+      // the submit, which the host enables on the same condition.
+      const submitLive = !card.hasAttribute(DRAFT_EMPTY_ATTR) || card.hasAttribute(ATTACHED_ATTR)
+      const standing = stop === null || send === null
+        ? stop ?? send
+        : submitLive ? send : stop
+      for (const button of primaries) {
+        const hidden = button !== standing
+        if (hidden !== button.hasAttribute(HIDDEN_ATTR)) button.toggleAttribute(HIDDEN_ATTR, hidden)
       }
     }
-    const access = findAccessTrigger()
-    if (access !== null) setAttributeIfChanged(access, CONTROL_ATTR, 'access')
+    for (const card of cards) {
+      // The fallback keeps a host that renders the slot outside a card marked.
+      const access = card.querySelector<HTMLElement>(PERMISSION_TRIGGER_SELECTOR) ?? (cards.length === 1 ? findAccessTrigger() : null)
+      if (access !== null) setAttributeIfChanged(access, CONTROL_ATTR, 'access')
+    }
   }
-
-  const DRAFT_EMPTY_ATTR = 'data-dsh-claude-draft-empty'
 
   /**
    * Mark the cards whose draft is empty. The host's editor shows its
@@ -240,20 +299,12 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
   /**
    * The two marks the conversation root carries for the composer's place.
    *
-   * The composer is chat-view-only. The host mounts the seat inside the
-   * conversation root on every tab (轨迹 / 上下文 even reserve room for
-   * it), so the skin reflects the active view on that root and CSS drops the
-   * whole bottom area unless the chat tab is selected. The mark rides the
-   * root rather than <body>, so a tab switch invalidates the conversation's
-   * subtree alone (D9).
-   *
-   * Scope: the conversation's view tablist is the one the host marks. Any
-   * other tablist in the root — the trajectory detail panel, a plugin's
-   * popover in the composer's toolbar — switches no view, and on the hero
-   * page it would be the only tablist there is. The chat view registers at
-   * order 0, so it is always the tablist's FIRST tab; reading that tab's
-   * aria-selected is locale-independent. No tab bar at all (hero / single
-   * view) means the chat surface is all there is.
+   * The host mounts the seat on every view. The saved view id is its stable
+   * identity, written before React commits the selection (D3): inspection
+   * views hide the composer, while chat, reader and other content views keep
+   * it. No usable saved value means chat. The mark rides the conversation
+   * root rather than <body>, so a view switch invalidates that subtree alone
+   * (D9).
    *
    * The second mark says the transcript is mounted. The host grants the
    * seat's pin, the bar behind the card and the view area's content-sized
@@ -265,11 +316,9 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
    * whole otherwise.
    */
   function syncRootMarks() {
-    const root = closestFrom(findComposerSeat(), `[${PHASE_ATTRIBUTE}]`)
-    const list = root === null ? null : root.querySelector(CONVERSATION_TABS_SELECTOR)
-    const first = list === null ? null : list.querySelector('[role="tab"]')
-    const chatActive = first === null || first.getAttribute('aria-selected') === 'true'
-    chatHidden = active && !chatActive
+    const root = closestFrom(findPageComposerSeat(), `[${PHASE_ATTRIBUTE}]`)
+    const view = conversationViewPreference(conversationSessionId(findConversationSession()))
+    chatHidden = active && view !== null && COMPOSER_HIDDEN_VIEWS.has(view)
     if (root !== hiddenRoot) {
       hiddenRoot?.removeAttribute(COMPOSER_HIDDEN_ATTR)
       hiddenRoot = root
@@ -301,7 +350,7 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
   function syncComposer() {
     readState()
     const found = cards.all()
-    heroCard = hero && found.length > 0 ? found[0] : null
+    heroCard = hero ? found.find(card => card.closest(SIDEBAR_CHAT_SELECTOR) === null) ?? null : null
     syncVariant(found)
     document.body.toggleAttribute(COMPOSER_ATTR, active)
     syncMobilePortrait(found)
@@ -311,8 +360,66 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
     placeholderCopy.sync(hero, active)
     syncDraftState(found)
     syncControls(found)
+    responsive.sync(found, active)
     syncRootMarks()
   }
+
+  /**
+   * Whether a card already carries the marks the frame that paints it reads:
+   * the variant the stylesheet keys on, the control mark on each primary
+   * button, and one of those buttons left on the page. A card with no primary
+   * button has nothing left to mark.
+   */
+  function markedForPaint(card: HTMLElement) {
+    if (!card.hasAttribute(COMPOSER_VARIANT_ATTRIBUTE)) return false
+    const primaries = [...card.querySelectorAll<HTMLElement>(PRIMARY_SELECTOR)]
+    if (primaries.length === 0) return true
+    if (!primaries.every(button => button.hasAttribute(CONTROL_ATTR))) return false
+    return primaries.filter(button => !button.hasAttribute(HIDDEN_ATTR)).length === 1
+  }
+
+  /**
+   * The cards a batch brought in: the card an added node stands in, and the
+   * cards inside an added node. The batch's own records name them, so the
+   * document is never walked for them (D9).
+   */
+  function addedCards(records: readonly MutationRecord[]) {
+    const cards = new Set<HTMLElement>()
+    for (const record of records) {
+      for (const node of record.addedNodes) {
+        if (!(node instanceof Element)) continue
+        const owner = node.closest<HTMLElement>(COMPOSER_CARD_SELECTOR)
+        if (owner !== null) cards.add(owner)
+        for (const card of node.querySelectorAll<HTMLElement>(COMPOSER_CARD_SELECTOR)) cards.add(card)
+      }
+    }
+    return [...cards]
+  }
+
+  /**
+   * Put the marks a mounted card needs on it before the browser paints (#188).
+   *
+   * The scheduler's pass lands on the frame after the one a batch paints in,
+   * and a batch the size of a session switch is dispatched after that frame's
+   * paint (engine/bus.ts): a card left for the pass draws one frame in the
+   * host's own look — a filled send button and its own edge — and the skin's
+   * transition into its own look takes a few hundred milliseconds more.
+   *
+   * This subscription asks for `beforePaint`, so it runs inside every batch's
+   * own callback and writes what that frame paints (#189). The cards are taken
+   * off the batch's own records and not off `cards`: the registry behind
+   * `observeMatches` listens without `beforePaint`, so on a large batch it
+   * is a task late and the card this batch mounted is not in its list yet.
+   */
+  const stopMutations = subscribeMutations(document.body, { childList: true, subtree: true, beforePaint: true }, (records) => {
+    const pending = addedCards(records).filter(card => !markedForPaint(card))
+    if (pending.length === 0) return
+    readState()
+    document.body.toggleAttribute(COMPOSER_ATTR, active)
+    syncVariant(pending)
+    syncDraftState(pending)
+    syncControls(pending)
+  })
 
   /**
    * A press on the inline card lands in its editor: the card's padding and
@@ -357,6 +464,8 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
     isHero() { return hero },
     /** The hero page's composer card as of this pass, or null off the hero page. */
     heroCard() { return heroCard },
+    /** Every composer card on the page, the sidebar's own included. */
+    cards() { return cards.all() },
     /** Whether the composer restyle applies to the page shown, as of this pass. */
     isActive() { return active },
     /** Whether the studio home layout owns the hero page, as of this pass. */
@@ -364,22 +473,31 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
     /** Whether the composer is restyled but the chat tab is not up, as of this pass. */
     isChatHidden() { return chatHidden },
     /** A copy source changed, the composer-scope preference among them: read again now. */
-    onCopyChange: readState,
-    /** A composer input or composition event: the hint's synthetic placeholder may have changed. */
-    onInput() { placeholderCopy.onInput(hero, active) },
+    onCopyChange() {
+      readState()
+    },
+    /** A composer input: refresh the hint. */
+    onInput() {
+      placeholderCopy.onInput(hero, active)
+    },
     onPointerDown: focusEditorOnPress,
     /** The composer card changed size: the transcript follows it. */
     reposition(reason: 'viewport' | 'composer') {
+      responsive.measure()
       if (reason === 'composer') followTranscript()
     }
   }
   readState()
 
   return () => {
+    stopMutations()
     active = false
     heroCard = null
     stopWindowBlur()
+    document.removeEventListener('compositionend', onCompositionEnd, true)
     placeholderCopy.dispose()
+    responsive.dispose()
+    stopViewportFollow()
     cards.release()
     placeholders.release()
     document.body.removeAttribute(COMPOSER_ATTR)
@@ -390,7 +508,7 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
     chatHidden = false
     for (const card of portraitCards) card.removeAttribute(MOBILE_PORTRAIT_ATTR)
     portraitCards.clear()
-    const marks = ['data-composer-variant', 'data-has-attachments', ATTACHMENT_TILE_ATTR, DRAFT_EMPTY_ATTR, CONTROL_ATTR]
+    const marks = ['data-composer-variant', ATTACHED_ATTR, ATTACHMENT_TILE_ATTR, DRAFT_EMPTY_ATTR, CONTROL_ATTR, HIDDEN_ATTR]
     for (const mark of marks) {
       for (const marked of document.querySelectorAll(`[${mark}]`)) marked.removeAttribute(mark)
     }

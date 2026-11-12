@@ -1,4 +1,4 @@
-import { RIGHTBAR_COLLAPSED_ATTRIBUTE, SIDEBAR_BESIDE_RIGHTBAR_MIN_PX, SIDEBAR_COLLAPSED_ATTRIBUTE, WINDOWS_MENU_START_PROPERTY } from '@dsh-claude-style/contracts/dom'
+import { RIGHTBAR_COLLAPSED_ATTRIBUTE, SIDEBAR_BESIDE_RIGHTBAR_MIN_PX, SIDEBAR_COLLAPSED_ATTRIBUTE, SIDEBAR_DRAWER_ATTRIBUTE, WINDOWS_MENU_START_PROPERTY } from '@dsh-claude-style/contracts/dom'
 import { observeMatches, subscribeMutations } from '@dsh-claude-style/engine/bus'
 import { findForeground, findSidebarRoot, findSidebarToggle, hostLayout } from '@dsh-claude-style/engine/host'
 import type { HostContext } from '@dsh-claude-style/engine/host'
@@ -18,6 +18,12 @@ import { FRAME_SELECTOR } from '../../shared/page-scale-columns'
  * and the column, or picking a session, a new session or a panel in it, closes
  * it the same way; a click on the toggle while it is open keeps the sidebar open
  * as the click always has, and the page then makes room as usual.
+ *
+ * A narrow layout may already stand the collapsed column out of the frame's own
+ * flow as a drawer, holding its own room and dimming the page behind a backdrop
+ * of its own. That layout keeps the sidebar to itself: the peek's overlay and
+ * its layer would stand under that backdrop and take the drawer down with them,
+ * so the peek stands down there.
  */
 
 /** How long the pointer rests on the toggle before the sidebar opens: a pointer passing over on its way to the caption row opens nothing. */
@@ -67,9 +73,23 @@ export function install(ctx: HostContext) {
   const collapsed = (box: HTMLElement) => box.hasAttribute(SIDEBAR_COLLAPSED_ATTRIBUTE)
   const column = () => frame?.querySelector<HTMLElement>(COLUMN_SELECTOR) ?? null
 
-  /** Whether opening the sidebar here leaves the page as it stands: collapsed, and with any right panel kept beside it. */
+  /**
+   * Whether the frame's own flow still holds the collapsed column: a drawer
+   * stands out of it. The host states the drawer in a mark of its own, so the
+   * mark answers first; a host build that writes none is read by the column's
+   * own placement, which costs a layout to read.
+   */
+  function inFlow(box: HTMLElement) {
+    if (box.hasAttribute(SIDEBAR_DRAWER_ATTRIBUTE)) return false
+    const col = box.querySelector<HTMLElement>(COLUMN_SELECTOR)
+    if (col === null) return true
+    const position = getComputedStyle(col).position
+    return position !== 'absolute' && position !== 'fixed'
+  }
+
+  /** Whether opening the sidebar here leaves the page as it stands: collapsed, in the frame's flow, and with any right panel kept beside it. */
   function canOpen(box: HTMLElement) {
-    if (!collapsed(box)) return false
+    if (!collapsed(box) || !inFlow(box)) return false
     return box.hasAttribute(RIGHTBAR_COLLAPSED_ATTRIBUTE) || box.getBoundingClientRect().width >= SIDEBAR_BESIDE_RIGHTBAR_MIN_PX
   }
 

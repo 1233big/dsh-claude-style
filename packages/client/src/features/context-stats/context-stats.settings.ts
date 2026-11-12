@@ -3,7 +3,12 @@ import { CONTEXT_DISPLAY_PIE, CONTEXT_DISPLAY_RING_BAND, CONTEXT_DISPLAY_RING_RA
 import { contextPieImage } from './context-meter-pie'
 import { METER_RING_RADIUS, METER_RING_SIZE, contextBandAt, ringDash } from './context-meter-face'
 import { CONTEXT_STOPS, rampPosition } from './stats-ramp'
+import { PreviewCards } from '../../shared/preview-cards'
 import { copy } from './copy'
+import { openBillingEditor, unpricedModels } from './billing-editor'
+import { parseBillingTable } from '@dsh-claude-style/contracts/billing-table'
+import type { PreviewOption } from '../../shared/preview-cards'
+import type { Prefs } from '../../constants'
 import type { SettingsControlsOf, SettingsRowView } from '../../core/feature'
 import type manifest from './context-stats.manifest'
 
@@ -40,6 +45,7 @@ const FACES = [
 /** The row controls this feature draws itself (D72). */
 export const controls: SettingsControlsOf<typeof manifest> = {
   'context-display': ContextDisplayPicker,
+  'billing-table': BillingTableRow,
 }
 
 /**
@@ -110,31 +116,51 @@ function ContextDisplayPicker(props: SettingsRowView) {
     observer.observe(document.body, { attributes: true, attributeFilter: ['data-ds-dark-theme'] })
     return () => observer.disconnect()
   }, [])
+  // The cards carry no visible text: the face's name is its accessible name,
+  // and the row's description names the three in card order.
+  const options: PreviewOption<Prefs['contextDisplay']>[] = FACES.map((face) => ({
+    value: face.value,
+    label: copy(face.label),
+    content: React.createElement(
+      'span',
+      { className: 'dsh-claude-context-display-samples', 'aria-hidden': 'true' },
+      SAMPLE_READINGS[face.value].map((percent) => React.createElement(ContextSample, { key: percent, face: face.value, percent })),
+    ),
+  }))
+  return React.createElement(PreviewCards<Prefs['contextDisplay']>, {
+    cardClass: 'dsh-claude-context-display-card',
+    options,
+    value: props.prefs.contextDisplay,
+    write: (value: Prefs['contextDisplay']) => props.write({ contextDisplay: value }),
+    disabled: props.disabled,
+    label: copy('contextDisplayTitle'),
+  })
+}
+
+/**
+ * The custom price table's settings row: one button opening the editor
+ * (billing-editor.ts). The row says how many rows stand and how many models the
+ * table could not price, so the reader can tell whether the table needs a row
+ * before opening it.
+ */
+function BillingTableRow(props: SettingsRowView) {
+  const count = parseBillingTable(props.prefs.billingTable).length
+  const missing = unpricedModels().length
+  const summary = missing === 0
+    ? copy('billingTableCount').replace('{count}', String(count))
+    : copy('billingTableCountMissing').replace('{count}', String(count)).replace('{missing}', String(missing))
+  const open = () => {
+    if (props.disabled) return
+    openBillingEditor(props.prefs.billingTable, props.prefs.billingCurrency, entries => props.write({ billingTable: entries }))
+  }
   return React.createElement(
-    'div',
-    { className: 'dsh-claude-context-display', role: 'group', 'aria-label': copy('contextDisplayTitle') },
-    FACES.map((face) => {
-      const selected = props.prefs.contextDisplay === face.value
-      return React.createElement(
-        'button',
-        {
-          key: face.value,
-          type: 'button',
-          className: 'dsh-claude-context-display-card',
-          disabled: props.disabled,
-          'data-active': selected ? '' : undefined,
-          'aria-pressed': selected ? 'true' : 'false',
-          // The cards carry no visible text: the face's name is its accessible
-          // name, and the row's description names the three in card order.
-          'aria-label': copy(face.label),
-          onClick: () => { if (!props.disabled && !selected) props.write({ contextDisplay: face.value }) },
-        },
-        React.createElement(
-          'span',
-          { className: 'dsh-claude-context-display-samples', 'aria-hidden': 'true' },
-          SAMPLE_READINGS[face.value].map((percent) => React.createElement(ContextSample, { key: percent, face: face.value, percent })),
-        ),
-      )
-    }),
+    'span',
+    { className: 'dsh-claude-billing-row-control' },
+    React.createElement('span', { className: 'dsh-claude-billing-row-summary' }, summary),
+    React.createElement(
+      'button',
+      { type: 'button', className: 'dsh-claude-billing-row-button', onClick: open, disabled: props.disabled },
+      copy('billingTableEdit'),
+    ),
   )
 }

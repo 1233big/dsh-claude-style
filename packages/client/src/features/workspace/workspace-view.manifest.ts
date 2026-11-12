@@ -8,9 +8,12 @@ export default {
   stylesheets: [{ file: 'workspace.css', rank: 120 }],
   settingsRows: [{
     tab: 'sidebar',
-    rank: 30,
+    // Under the entries above the list (30): the view switch stands on the list itself.
+    rank: 32,
     pref: 'workspaceView',
     title: 'workspaceTitle',
+    desc: 'workspaceDesc',
   }],
-  cases: ['switches', 'popovers']
+  cases: ['switches', 'popovers'],
+  scenarios: ['sidebarRail'],
 } satisfies FeatureManifest

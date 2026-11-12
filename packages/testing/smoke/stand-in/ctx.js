@@ -31,20 +31,30 @@
       if (name === 'modelDirectories') return host.modelDirectories
       if (name === 'workspaces') return workspacesService
       if (name === 'uiConversation') return deepy !== undefined ? deepy.conversation : turnNav !== undefined ? turnNav.conversation : waitChat
-      if (name === 'uiSession') return deepy !== undefined ? deepy.uiSession : CASE === 'session-title' ? { current: { value: { key: 'smoke-session' } } } : undefined
+      // The session the shell shows, as the host's uiSession publishes it; a fixture names it as `selected`.
+      // The sync-fault case's selection throws the way its session list does.
+      if (name === 'uiSession') {
+        if (deepy !== undefined) return deepy.uiSession
+        if (CASE === 'sync-fault') return { current: { get value() { throw new Error('session selection unavailable') } } }
+        return { current: { value: { key: sessions !== undefined ? sessions.selected : undefined } } }
+      }
       if (name === 'locale') return localeService
-      if (name === 'slots') return slotRegistry
+      // The effort case models the documented boundary (D75): the plugin's own context hands no registry out; only the injected scope serves it.
+    if (name === 'slots') return CASE === 'effort' ? undefined : slotRegistry
       return undefined
     },
     effect: function (fn) { window.__dispose = fn() },
   }
   // The desktop account service mounts after this plugin does, so the skin waits
   // for it through ctx.inject; the studio case waits for the slot
-  // registry the same way, and the chunk-late case for the settings section's seats. The
-  // other cases keep no inject, which is what makes them read
-  // synchronously at install (the install-fault case depends on that read
+  // registry the same way, the effort case too — its own context hands no
+  // registry out, the way the documented boundary reads (D75), the chunk-late case for the settings section's seats,
+  // the search case for its sidebar seat, and the switch cases
+  // for the row-action seat their workspace delete action registers into.
+  // The other cases keep no inject, which is what makes them
+  // read synchronously at install (the install-fault case depends on that read
   // throwing).
-  if (CASE === 'desktop' || CASE === 'studio' || CASE === 'settings' || CASE === 'chunk-late' || CASE === 'chat-files' || CASE === 'peer-chat-ux' || CASE === 'skin-center-handoff' || CASE === 'skin-center-arrival' || CASE === 'composer' || CASE === 'permissions-locale') {
+  if (CASE === 'desktop' || CASE === 'effort' || CASE === 'search' || CASE === 'studio' || CASE === 'settings' || CASE === 'chunk-late' || CASE === 'chat-files' || CASE === 'peer-chat-ux' || CASE === 'switches' || CASE === 'switches-off' || CASE === 'skin-center-handoff' || CASE === 'skin-center-arrival' || CASE === 'composer' || CASE === 'permissions-locale') {
     window.__ctx.inject = function (deps, cb) {
       var disposers = []
       cb({
@@ -53,7 +63,7 @@
           if (typeof dispose === 'function') disposers.push(dispose)
           return dispose
         },
-        get: function (name) { return window.__ctx.get(name) },
+        get: function (name) { if (name === 'slots') return slotRegistry; return window.__ctx.get(name) },
       })
       return {
         dispose: function () {

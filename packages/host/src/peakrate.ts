@@ -1,19 +1,18 @@
 /**
  * The peak / off-peak catalog: which billing clock applies to which model, and
- * what the browser half needs to judge it
+ * what the browser half needs to judge it.
  *
- * The data source is a published catalog document (offpeakclock.com) rather
- * than an API: no provider exposes "is this peak right now" over HTTP, so the
- * schedules are published as JSON and judged against the clock on the client.
- * The host half keeps that document fresh and hands it to the browser over its
- * own route — the browser never talks to the third party itself, so there is
- * one fetch per host rather than one per page load, and a copy survives on
- * disk across restarts.
+ * The data source is a published JSON catalog rather than an API, because no
+ * provider exposes "is this peak right now" over HTTP, so the schedules are
+ * judged against the clock on the client. The host half keeps that document fresh
+ * and hands it over its own route: the browser never talks to the third party
+ * itself, so there is one fetch per host rather than one per page load, and a
+ * copy survives on disk across restarts.
  *
  * Reading order: a disk cache that is not older than the copy shipped in the
- * package, else that shipped copy. The shipped copy is what makes the meter
- * work on a machine that has never reached the source, and a copy newer than
- * the cache (a plugin upgrade) wins over a stale download.
+ * package, else that shipped copy. The shipped copy is what makes the meter work
+ * on a machine that has never reached the source, and a copy newer than the cache
+ * (a plugin upgrade) wins over a stale download.
  */
 import { PACKAGE_NAME } from '@dsh-claude-style/contracts/package'
 import { statSync } from 'node:fs'
@@ -24,14 +23,13 @@ import { cachePath, readJsonDocument, writeJsonDocument } from './cache-file.js'
 import { packageRoot } from './package-root.js'
 import { parseCatalog } from './peakrate-catalog.js'
 
-/** The catalog document the build copies beside the bundle (scripts/build.mjs). */
+/** The catalog document the build copies beside the bundle (scripts/build/build.mjs). */
 export const PEAKRATE_CATALOG_FILE = 'peakrate-catalog.json'
 
 /**
  * Where the catalog is published: the repository's copy first, the raw file
- * second. `.github/workflows/data.yml` refreshes that copy from the upstream
- * source once a day, so every install downloads a validated file instead of
- * asking the upstream for one.
+ * second. `.github/workflows/data.yml` refreshes that copy from the upstream source
+ * once a day, so every install downloads a validated file.
  */
 export const PEAKRATE_CATALOG_URLS = [
   'https://cdn.jsdelivr.net/gh/Nwflower/dsh-claude-style@master/packages/host/data/peakrate-catalog.json',
@@ -43,9 +41,9 @@ export const PEAKRATE_REFRESH_MS = 24 * 60 * 60 * 1000
 
 /**
  * How long after the last request the timer stands down: the page that asked is
- * gone, and a host nobody is reading does not keep reaching the source
- * The browser half asks at least once a day while the meter is on, so only a
- * host whose reader has turned the feature off (or left the page) goes idle.
+ * gone, and a host nobody is reading does not keep reaching the source. The
+ * browser half asks at least once a day while the meter is on, so only a host
+ * whose reader left goes idle.
  */
 export const PEAKRATE_IDLE_MS = 48 * 60 * 60 * 1000
 
@@ -100,6 +98,8 @@ export function createPeakRate(ctx: DshContext): PeakRateStore {
    * otherwise land after the routes are gone and write the cache file.
    */
   let inFlight: AbortController | null = null
+  /** Set by dispose: a source answer that lands afterwards must not write the cache. */
+  let disposed = false
   /** When the route last asked: what tells a reader-driven timer from an idle one. */
   let lastAskedAt = 0
   const warn = (message: string) => ctx.logger?.warn?.(message)
@@ -158,6 +158,9 @@ export function createPeakRate(ctx: DshContext): PeakRateStore {
   async function refresh(): Promise<boolean> {
     let raw: unknown
     for (const url of PEAKRATE_CATALOG_URLS) {
+      // Disposed while the previous source was being asked: nothing below runs
+      // on behalf of a plugin that is gone.
+      if (disposed) return false
       try {
         const controller = new AbortController()
         inFlight = controller
@@ -190,6 +193,8 @@ export function createPeakRate(ctx: DshContext): PeakRateStore {
       warn(`${PACKAGE_NAME}: peak rate source answered a document this build does not understand; keeping the current catalog`)
       return false
     }
+    // A disposal during the fetch must not leave this answer in the cache.
+    if (disposed) return false
     catalog = parsed
     origin = 'remote'
     fetchedAt = Date.now()
@@ -199,6 +204,7 @@ export function createPeakRate(ctx: DshContext): PeakRateStore {
 
   /** Store the fetched document, so a restart does not have to reach the source again. */
   function writeCache(): void {
+    if (disposed) return
     const stored: CacheDocument = { fetchedAt, document: catalog }
     writeJsonDocument(ctx, cacheFile, 'peak rate cache', stored)
   }
@@ -243,6 +249,7 @@ export function createPeakRate(ctx: DshContext): PeakRateStore {
     refresh,
     payload,
     dispose() {
+      disposed = true
       stopTimer()
       // A read still in flight is stopped here: its answer would write the
       // cache file for a plugin that is no longer installed.

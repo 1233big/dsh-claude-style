@@ -11,11 +11,12 @@ export default {
   stylesheets: [{ generated: 'reveal-steps', rank: 180 }],
   settingsRows: [{
     tab: 'motion',
-    rank: 40,
+    rank: 20,
     pref: 'chatReveal',
     title: 'chatRevealTitle',
     control: 'reveal-preview',
     stillWhenReduced: true,
   }],
-  cases: ['chat-reveal']
+  cases: ['chat-reveal'],
+  scenarios: ['reasoningStream', 'reasoningContinuous'],
 } satisfies FeatureManifest

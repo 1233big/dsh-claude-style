@@ -1,8 +1,10 @@
 import * as React from 'react'
+import * as primitives from '@deepseek-ai/dsh-client-ui-primitives'
 import { formatHomeCount, homeShortDate, homeShortDateFormat } from './data'
 import type { HeatCell, HomePanel } from './data'
 import { formatCompactTokens } from '../../shared/format'
-import { HEAT_CELL_SELECTOR, placeHeatTip } from './heat-tip'
+import { tooltipAnchor } from '../../shared/host-tooltip'
+import { HEAT_CELL_SELECTOR, HEAT_HINT_CLASS, HEAT_HINT_TEXT_CLASS, hideHeatTip, showHeatTip } from './heat-tip'
 import { copy } from './copy'
 
 /**
@@ -15,15 +17,22 @@ import { copy } from './copy'
  * zero and not a skeleton: the skeleton means "still loading", which a
  * missing figure is not.
  *
+ * The day tip is one element the grid carries (heat-tip.ts): the pointer names a
+ * day and the same pill moves to it, so a crossing swaps one word rather than
+ * one box.
+ *
  * @returns `{ view(data) }`, where `data` is `homePanelData`'s answer.
  */
 export function createHomeOverview() {
   function statCell(key: string, label: string, text: string, skeleton: boolean) {
+    const value = React.createElement('span', { className: 'dsh-claude-home-stat-value' }, skeleton ? '' : text)
     return React.createElement(
       'div',
       { key, className: 'dsh-claude-home-stat', 'data-stat': key, 'data-skeleton': skeleton ? '' : undefined },
       React.createElement('span', { className: 'dsh-claude-home-stat-label' }, label),
-      React.createElement('span', { className: 'dsh-claude-home-stat-value', title: skeleton ? undefined : text }, skeleton ? '' : text),
+      // 缩短过的数字（12.3k）在悬停时给出原值：提示是宿主自己的那一份，
+      // 与页面上其他控件同一个样式。
+      skeleton ? value : React.createElement(primitives.Tooltip, { label: text, side: 'bottom', portal: true, children: tooltipAnchor(value) }),
     )
   }
 
@@ -60,12 +69,16 @@ export function createHomeOverview() {
         {
           className: 'dsh-claude-home-heat',
           'data-skeleton': data.known ? undefined : '',
-          // The pill a cell carries is wider than the cell, so where it may
-          // stand is decided from the width it takes on the cell the pointer
-          // is over, never from a column count (heat-tip.ts).
+          // The pill is wider than a cell and the gutters between cells are the
+          // grid's own, so the pointer is followed on the grid: a crossing names
+          // the next day in the pill already standing, and leaving takes it away.
+          // Neither gesture builds or drops an element (heat-tip.ts).
           onMouseOver(event: React.MouseEvent<HTMLDivElement>) {
             const cell = (event.target as HTMLElement).closest?.(HEAT_CELL_SELECTOR)
-            if (cell instanceof HTMLElement) placeHeatTip(cell, event.currentTarget)
+            if (cell instanceof HTMLElement) showHeatTip(cell, event.currentTarget)
+          },
+          onMouseLeave(event: React.MouseEvent<HTMLDivElement>) {
+            hideHeatTip(event.currentTarget)
           },
         },
         data.grid.cells.map(cell => {
@@ -78,6 +91,12 @@ export function createHomeOverview() {
             'aria-label': tip,
           })
         }),
+        // The panel's one day tip: its words are rewritten in place (heat-tip.ts).
+        React.createElement(
+          'span',
+          { className: HEAT_HINT_CLASS, 'aria-hidden': 'true' },
+          React.createElement('span', { className: HEAT_HINT_TEXT_CLASS }),
+        ),
       ),
       data.fun === null ? null : React.createElement('span', { className: 'dsh-claude-home-fun' }, data.fun),
     )

@@ -1,5 +1,5 @@
 import { ACCOUNT_ARMED_ATTR, AUTO_POPOVER_OFF } from '../../constants'
-import { findFootArea } from '@dsh-claude-style/engine/host'
+import { findFootArea, findHostModal } from '@dsh-claude-style/engine/host'
 import { readPrefs } from '../../core/prefs'
 import { createFooterMirror } from './footer-mirror'
 import { createHostAccountMenu } from './host-menu'
@@ -9,8 +9,10 @@ import { createAccountRows } from './rows'
 import { createAccountSurface } from './surface'
 import type { AccountSurfaceMode } from './surface'
 import { createAccountDrawer } from './account-drawer'
+import { createFooterSeats } from './footer-seats'
 import { POPOVER_CLOSE_DELAY, POPOVER_OPEN_DELAY, closeOtherPopovers, createHoverIntent, pressKeepsPopoverOpen, registerPopover, unregisterPopover } from '../../shared/popover'
 import { inPageBox } from '../../shared/page-zoom'
+import { resolveDisplayName } from '../../shared/identity'
 import type { HostContext } from '@dsh-claude-style/engine/host'
 import type { CloseReason, FeatureHandle } from '@dsh-claude-style/engine/scheduler'
 import type { FeatureUi } from '../../core/feature'
@@ -26,7 +28,7 @@ export interface FooterHandle extends FeatureHandle {
  * The account area of the sidebar footer.
  *
  * One row model, two mount points (account/surface.ts): on a host that has
- * an account row (Desktop 0.1.7+) that row is the entry and our container is
+ * an account row (Desktop) that row is the entry and our container is
  * injected into the host's own account menu; on a host without one (Web)
  * the skin self-builds the trigger and the popover (account/account-drawer.ts)
  * and the popover's body is the container. The rows themselves — the account
@@ -45,6 +47,8 @@ export interface FooterHandle extends FeatureHandle {
 export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
   /** The marker the stylesheet hangs the host account row's Claude shape on. */
   const HOST_ROW_ATTR = 'data-dsh-claude-account-host-row'
+  /** The host row's own label, kept while the skin's name stands in its place. */
+  const HOST_ROW_NAME_ATTR = 'data-dsh-claude-account-host-name'
   const profile = createAccountProfile(ctx, () => {
     if (typeof ui.schedule === 'function') ui.schedule()
   })
@@ -131,6 +135,9 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
     isOpen() { return surface.mode() === 'synthetic' && drawer.isOpen() },
     close: closeSurface
   })
+  // The entries the skin keeps in the sidebar (footer-seats.ts): the update
+  // control among them, which the reader reaches without opening the popover.
+  const seats = createFooterSeats()
   // The account area takes part in the shared popover rule (shared/popover.ts):
   // ONE entry for both surfaces, since a given host has only one of them.
   registerPopover('account', closeAccountSurfaces)
@@ -207,11 +214,31 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
    */
   function closeHostMenuForHover() {
     if (ui.ban?.isOpen() === true) return
+    // A surface the reader opened from the menu is theirs to keep: the menu's
+    // dismissal is an Escape addressed to the host's Menu, and the host's Menu
+    // is one listener among several that answer that key, so closing the menu
+    // from behind a dialog the reader is now using takes the dialog with it.
+    // The settings panel a row opens is why this stands down.
+    if (hostOverlayOpen()) return
     const row = hostMenu.trigger()
     if (row !== null && row.matches(':hover')) return
     const menu = hostMenu.findMenu()
     if (menu !== null && menu.matches(':hover')) return
     closeSurface()
+  }
+
+  /**
+   * Whether the host has one of its own overlays up — the settings panel the
+   * menu's rows open, or a plugin's dialog. The menu itself is not one: it is
+   * the surface being closed, and it is read by `findMenu` instead.
+   *
+   * The lookup goes through the engine's host accessors (engine/src/host.ts),
+   * which is where a document-wide query belongs: the host portals its overlays
+   * onto <body>, so the settings panel a row opens stands nowhere near the
+   * footer it was opened from.
+   */
+  function hostOverlayOpen() {
+    return findHostModal() !== null
   }
 
   /**
@@ -330,6 +357,8 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
 
   /** The entry row's width, as last written to the stylesheet. */
   let accountWidth = 0
+  /** The footer's content width, as last written: the width mirrored entries were laid out in. */
+  let footerWidth = 0
   /** The self-built drawer's distance from the footer's edges, as last written. */
   let accountInsetLeft = -1
   let accountInsetRight = -1
@@ -354,6 +383,10 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
       accountWidth = 0
       document.body.style.removeProperty('--dsh-claude-account-width')
     }
+    if (footerWidth !== 0) {
+      footerWidth = 0
+      document.body.style.removeProperty('--dsh-claude-account-footer-width')
+    }
     if (accountInsetLeft !== -1 || accountInsetRight !== -1) {
       accountInsetLeft = -1
       accountInsetRight = -1
@@ -364,10 +397,16 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
     // The menu marker goes with the takeover: an open host menu must not
     // keep the skin's card styling after the footer is handed back.
     surface.clearMenu()
+    // The copies stand inside the row the takeover draws, so they leave with it.
+    seats.clear()
     const injected = document.querySelectorAll('.dsh-claude-account-inject')
     for (let i = 0; i < injected.length; i++) injected[i].remove()
     const marked = document.querySelectorAll(`[${HOST_ROW_ATTR}]`)
-    for (let m = 0; m < marked.length; m++) marked[m].removeAttribute(HOST_ROW_ATTR)
+    for (let m = 0; m < marked.length; m++) {
+      // The row outlives the takeover, so its own label goes back with it.
+      restoreHostRowName(marked[m])
+      marked[m].removeAttribute(HOST_ROW_ATTR)
+    }
     // The host's row outlives this generation, so its listeners come off here:
     // a switch off and on again must not leave a second set behind.
     for (const [row, bindings] of hostRowBindings) {
@@ -377,10 +416,18 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
     unbindHostMenu()
     menuPlacement.unwatch()
     if (footArea) mirror.clear(footArea)
+    seats.clear()
   }
 
   /** The entry row's boxes, taken in the pass's read phase when the row already stands (D40). */
-  let rowBoxes: { row: Element, rowRect: DOMRect, footRect: DOMRect | null } | null = null
+  let rowBoxes: { row: Element, rowRect: DOMRect, footRect: DOMRect | null, footerWidth: number } | null = null
+
+  /** The footer's content width: the box a plugin's own footer entry is laid out in. */
+  function readFooterContentWidth(footArea: Element): number {
+    const styles = getComputedStyle(footArea)
+    const contentWidth = Math.round(footArea.clientWidth - parseFloat(styles.paddingLeft) - parseFloat(styles.paddingRight))
+    return contentWidth > 0 ? contentWidth : 0
+  }
 
   /**
    * Read the entry row's box before the pass writes. The row a pass creates
@@ -395,7 +442,61 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
     const synthetic = surface.mode() === 'synthetic'
     const row = synthetic ? drawer.btn() : hostMenu.trigger()
     if (row === null) return
-    rowBoxes = { row, rowRect: inPageBox(row.getBoundingClientRect()), footRect: synthetic ? inPageBox(footArea.getBoundingClientRect()) : null }
+    // A plugin's footer entries are laid out in the footer's content box; a
+    // mirrored entry keeps that width so the card inside it does not reflow.
+    rowBoxes = {
+      row,
+      rowRect: inPageBox(row.getBoundingClientRect()),
+      footRect: synthetic ? inPageBox(footArea.getBoundingClientRect()) : null,
+      footerWidth: readFooterContentWidth(footArea)
+    }
+  }
+
+  /**
+   * The text node the host writes its own account label into — the account
+   * number a Desktop signs in with. The row is the host's own button, so the
+   * label is found rather than named: the first text node with words in it.
+   */
+  function hostRowLabelNode(row: Element): Text | null {
+    const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT)
+    for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+      if ((node.nodeValue || '').trim() !== '') return node as Text
+    }
+    return null
+  }
+
+  /**
+   * Put the skin's name where the host's own label stands.
+   *
+   * The settings page promises the stored name shows on the account row, and
+   * on the host path that row is the host's own button: its box, its picture
+   * and its click stay exactly as the host drew them, and only the words
+   * change. A host that signed in writes the account number there, which is
+   * the one thing that promise exists to keep off the row. Every pass
+   * re-checks, because the host renders the row itself and may write its own
+   * label back.
+   */
+  function syncHostRowName(row: Element) {
+    // Nothing resolved: the host's own label is the only name there is.
+    const name = resolveDisplayName()
+    if (name === '') return
+    const node = hostRowLabelNode(row)
+    if (node === null) return
+    const label = (node.nodeValue || '').trim()
+    if (label === name) return
+    // Kept on the row itself: the node belongs to the host, and handing the
+    // footer back must leave the host's own label where it found it.
+    if (!row.hasAttribute(HOST_ROW_NAME_ATTR)) row.setAttribute(HOST_ROW_NAME_ATTR, label)
+    node.nodeValue = name
+  }
+
+  /** Hand the host's own label back to the row it came from. */
+  function restoreHostRowName(row: Element) {
+    if (!row.hasAttribute(HOST_ROW_NAME_ATTR)) return
+    const original = row.getAttribute(HOST_ROW_NAME_ATTR) || ''
+    row.removeAttribute(HOST_ROW_NAME_ATTR)
+    const node = hostRowLabelNode(row)
+    if (node !== null && (node.nodeValue || '').trim() !== original) node.nodeValue = original
   }
 
   /**
@@ -413,12 +514,21 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
     const synthetic = surface.mode() === 'synthetic'
     const measured = rowBoxes !== null && rowBoxes.row === row
       ? rowBoxes
-      : { row, rowRect: inPageBox(row.getBoundingClientRect()), footRect: synthetic ? inPageBox(footArea.getBoundingClientRect()) : null }
+      : {
+          row,
+          rowRect: inPageBox(row.getBoundingClientRect()),
+          footRect: synthetic ? inPageBox(footArea.getBoundingClientRect()) : null,
+          footerWidth: readFooterContentWidth(footArea)
+        }
     const rowRect = measured.rowRect
     const rowWidth = Math.round(rowRect.width)
     if (rowWidth > 0 && rowWidth !== accountWidth) {
       accountWidth = rowWidth
       document.body.style.setProperty('--dsh-claude-account-width', `${rowWidth}px`)
+    }
+    if (measured.footerWidth > 0 && measured.footerWidth !== footerWidth) {
+      footerWidth = measured.footerWidth
+      document.body.style.setProperty('--dsh-claude-account-footer-width', `${footerWidth}px`)
     }
     if (!synthetic || measured.footRect === null) return
     const footRect = measured.footRect
@@ -454,6 +564,9 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
     // DOM and flow, never moved or copied.
     const hostTrigger = hostMenu.trigger()
     if (hostTrigger !== null && !hostTrigger.hasAttribute(HOST_ROW_ATTR)) hostTrigger.setAttribute(HOST_ROW_ATTR, '')
+    // The host path's row holds the host's own label — the account number a
+    // signed-in Desktop shows. The skin's name stands in its place.
+    if (hostTrigger !== null && surface.mode() === 'host') syncHostRowName(hostTrigger)
     // The entry row — the host's own row, or the self-built button — is the
     // shape both cards have to match, so its box is measured here and handed
     // to the stylesheet. The hover preference is bound on the host's row in
@@ -467,6 +580,9 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
     // their icons painted beside the account row until the drawer had been
     // opened once. Only the mirroring needs a container to write into.
     mirror.sync(footArea)
+    // A seated entry stands in the account row itself, so the row has to be
+    // mounted before the copy has a place to go.
+    if (entryRow !== null) seats.sync(footArea)
 
     const root = surface.mode() === 'host' ? surface.container() : drawer.popover()
     if (root === null) return
@@ -520,6 +636,8 @@ export function install(ctx: HostContext, ui: FeatureUi<typeof manifest>) {
   return () => {
     profile.stop()
     unregisterPopover('account')
+    mirror.stop()
+    surface.dispose()
     dropAccountFooter(findFootArea())
   }
 }
